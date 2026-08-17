@@ -11,33 +11,39 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/swilgosz/mindskein/internal/hook"
+	"github.com/swilgosz/mindskein/internal/session"
 )
 
 // version is overridden at build time with
 // -ldflags "-X main.version=$(git describe --tags --always)".
 var version = "dev"
 
-// command is one top-level subcommand of the CLI.
+// command is one top-level subcommand of the CLI. Every handler takes stdin
+// because the hook subcommand reads its payload from it.
 type command struct {
 	name    string
 	summary string
-	run     func(args []string) error
+	run     func(args []string, stdin io.Reader) error
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "mindskein: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer) error {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	commands := []command{
 		{"brief", "print priorities, live sessions and last handoffs", cmdBrief},
 		{"status", "print live sessions only (mid-day check)", cmdStatus},
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", cmdPriorities},
 		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
-		{"version", "print the mindskein version", func([]string) error {
+		{"version", "print the mindskein version", func([]string, io.Reader) error {
 			fmt.Fprintln(stdout, version)
 			return nil
 		}},
@@ -58,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	name := fs.Arg(0)
 	for _, c := range commands {
 		if c.name == name {
-			return c.run(fs.Args()[1:])
+			return c.run(fs.Args()[1:], stdin)
 		}
 	}
 
@@ -85,21 +91,65 @@ func notImplemented(unit string) error {
 	return fmt.Errorf("not implemented yet — lands with %s", unit)
 }
 
-func cmdBrief([]string) error      { return notImplemented("U4 (brief renderer)") }
-func cmdStatus([]string) error     { return notImplemented("U4 (brief renderer)") }
-func cmdPriorities([]string) error { return notImplemented("U3 (priorities parser)") }
+func cmdBrief([]string, io.Reader) error      { return notImplemented("U4 (brief renderer)") }
+func cmdStatus([]string, io.Reader) error     { return notImplemented("U4 (brief renderer)") }
+func cmdPriorities([]string, io.Reader) error { return notImplemented("U3 (priorities parser)") }
 
 // cmdHook dispatches the three hook events registered globally in
 // ~/.claude/settings.json. The payload arrives on stdin as JSON.
-func cmdHook(args []string) error {
-	events := []string{"pre-tool-use", "notification", "stop"}
+//
+// Runtime failures are logged to ~/.mindskein/hooks.log and swallowed. A hook
+// that exits non-zero degrades the session it is meant to be quietly
+// observing — for PreToolUse, exit code 2 blocks the tool call outright — and
+// a missed status update is a far smaller problem than a broken editing
+// session. Only a misconfigured invocation (missing or unknown event name) is
+// reported as an error, because that one is a typo in settings.json and
+// nothing will ever be recorded until it is fixed.
+func cmdHook(args []string, stdin io.Reader) error {
 	if len(args) == 0 {
-		return fmt.Errorf("hook: expected one of %v", events)
+		return fmt.Errorf("hook: expected one of %v", hook.Events)
 	}
-	for _, e := range events {
-		if e == args[0] {
-			return notImplemented("U1 (hook capture + session registry)")
-		}
+	event, err := hook.ParseEvent(args[0])
+	if err != nil {
+		return fmt.Errorf("hook: %w", err)
 	}
-	return fmt.Errorf("hook: unknown event %q, expected one of %v", args[0], events)
+	if err := handleHook(event, stdin); err != nil {
+		logHookFailure(event, err)
+	}
+	return nil
+}
+
+func handleHook(event hook.Event, stdin io.Reader) error {
+	payload, err := hook.Parse(stdin)
+	if err != nil {
+		return err
+	}
+	store, err := session.DefaultStore()
+	if err != nil {
+		return err
+	}
+	// os.Getppid is the process that spawned the hook. Command hooks run
+	// through a shell, so this is best-effort provenance rather than a
+	// reliable handle on the Claude process; nothing keys off it yet.
+	_, err = hook.Handle(store, event, payload, time.Now().UTC(), os.Getppid())
+	return err
+}
+
+// logHookFailure appends one line to ~/.mindskein/hooks.log. Every failure
+// path here is itself ignored: if mindskein cannot even log, the hook still
+// must not disturb the session.
+func logHookFailure(event hook.Event, cause error) {
+	home, err := session.Home()
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(home, "hooks.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\t%s\t%v\n", time.Now().UTC().Format(time.RFC3339), event, cause)
 }
