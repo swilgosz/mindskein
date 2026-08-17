@@ -109,9 +109,16 @@ func loadFile(path string) (*Session, error) {
 	return &sess, nil
 }
 
-// Save writes the session atomically: a temp file in the same directory,
-// fsynced, then renamed over the target. A reader sees either the previous
-// complete file or the new one, never a truncated middle.
+// Save writes the session atomically: a temp file in the same directory, then
+// renamed over the target. rename(2) is atomic within a filesystem, so a
+// reader sees either the previous complete file or the new one, never a
+// truncated middle.
+//
+// Deliberately no fsync. It costs ~20ms on this hardware — two thirds of the
+// whole hook invocation — and buys only crash durability, which is worthless
+// here: after a power loss every session in the registry is dead anyway and
+// its record is stale by definition. This is a live cache, not a ledger, and
+// PreToolUse runs it on every single tool call.
 func (s *Store) Save(sess *Session) error {
 	path, err := s.Path(sess.ID)
 	if err != nil {
@@ -134,7 +141,7 @@ func (s *Store) Save(sess *Session) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once the rename below succeeds
 
-	if err := writeAndSync(tmp, data); err != nil {
+	if err := writeTemp(tmp, data); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmpName, filePerm); err != nil {
@@ -146,13 +153,14 @@ func (s *Store) Save(sess *Session) error {
 	return nil
 }
 
-func writeAndSync(f *os.File, data []byte) error {
-	defer f.Close()
+func writeTemp(f *os.File, data []byte) error {
 	if _, err := f.Write(data); err != nil {
+		f.Close()
 		return fmt.Errorf("writing %s: %w", f.Name(), err)
 	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing %s: %w", f.Name(), err)
+	// Close, not just defer it: the rename must not race a buffered write.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", f.Name(), err)
 	}
 	return nil
 }
