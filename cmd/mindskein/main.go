@@ -40,7 +40,9 @@ func main() {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	commands := []command{
 		{"brief", "print priorities, live sessions and last handoffs", cmdBrief},
-		{"status", "print live sessions only (mid-day check)", cmdStatus},
+		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
+			return cmdStatus(args, stdout)
+		}},
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", cmdPriorities},
 		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
 		{"version", "print the mindskein version", func([]string, io.Reader) error {
@@ -92,8 +94,24 @@ func notImplemented(unit string) error {
 }
 
 func cmdBrief([]string, io.Reader) error      { return notImplemented("U4 (brief renderer)") }
-func cmdStatus([]string, io.Reader) error     { return notImplemented("U4 (brief renderer)") }
 func cmdPriorities([]string, io.Reader) error { return notImplemented("U3 (priorities parser)") }
+
+// cmdStatus prints the live sessions section on its own — the mid-day check,
+// and the only way to read the registry without opening the JSON by hand.
+//
+// U4 still owns `brief`, which composes this block with priorities and
+// handoffs. This lands early because U1 is not dogfoodable without it.
+func cmdStatus(_ []string, stdout io.Writer) error {
+	store, err := session.DefaultStore()
+	if err != nil {
+		return err
+	}
+	sessions, err := store.List()
+	if err != nil {
+		return err
+	}
+	return session.Render(stdout, sessions, time.Now().UTC())
+}
 
 // cmdHook dispatches the three hook events registered globally in
 // ~/.claude/settings.json. The payload arrives on stdin as JSON.

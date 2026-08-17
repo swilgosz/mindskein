@@ -45,7 +45,7 @@ func TestRunUnknownCommand(t *testing.T) {
 }
 
 func TestRunDispatchesToUnimplementedCommands(t *testing.T) {
-	for _, args := range [][]string{{"brief"}, {"status"}, {"priorities"}} {
+	for _, args := range [][]string{{"brief"}, {"priorities"}} {
 		err := run(args, nil, io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
 			t.Errorf("run(%v) = %v, want not-implemented error", args, err)
@@ -59,6 +59,40 @@ func TestRunHookRejectsBadEvent(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "not implemented yet") {
 			t.Errorf("run(%v) = %v, want validation error", args, err)
 		}
+	}
+}
+
+// TestRunStatusReadsTheRegistry checks the command wiring; the rendering
+// itself is covered in internal/session.
+func TestRunStatusReadsTheRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"aaaa1111","cwd":"/Users/seb/Projects/mindskein","tool_name":"Edit"}`
+	if err := run([]string{"hook", "pre-tool-use"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := run([]string{"status"}, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("run(status) = %v, want nil", err)
+	}
+	for _, want := range []string{"LIVE SESSIONS", "aaaa1111", "mindskein", "running", "(Edit)"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("status output missing %q\ngot:\n%s", want, stdout.String())
+		}
+	}
+}
+
+// TestRunStatusOnEmptyRegistry: a fresh install must not look broken.
+func TestRunStatusOnEmptyRegistry(t *testing.T) {
+	t.Setenv("MINDSKEIN_HOME", t.TempDir())
+	var stdout bytes.Buffer
+	if err := run([]string{"status"}, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("run(status) with no sessions = %v, want nil", err)
+	}
+	if !strings.Contains(stdout.String(), "none recorded yet") {
+		t.Errorf("want a hint, got:\n%s", stdout.String())
 	}
 }
 
