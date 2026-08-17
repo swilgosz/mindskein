@@ -12,12 +12,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # No third-party dependencies yet, so there is no go.sum to key a
+          # cache on. Flip this back on when the first module lands.
+          cache: false
 
       - run: go build ./...
       - run: go vet ./...
