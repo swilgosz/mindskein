@@ -6,14 +6,12 @@ import (
 	"strings"
 )
 
-// Location is where a session was running.
-//
-// Two git identities rather than one, because they answer different questions.
-// Root is the worktree the session sat in — under a worktree-per-task workflow
-// that is the task boundary, so it is what a handoff is keyed on. Repo is the
-// repository shared by every worktree of Root, which is what lets a reader
-// group those tasks back under one project. Both are empty outside a
-// repository: the vault is not one, and a handoff must still be written there.
+// Location is where a session ran. Root is the checkout it sat in and Repo the
+// repository behind it, so sibling worktrees keep distinct Roots while sharing
+// one Repo. Root is where the session was at its last event, which is not
+// necessarily where it started: a session can move between worktrees, and a
+// worktree can be deleted after the fact. Both git fields are empty outside a
+// repository.
 type Location struct {
 	CWD    string
 	Root   string
@@ -21,8 +19,6 @@ type Location struct {
 	Branch string
 }
 
-// Name is the short label for this location — the worktree directory when
-// there is one, otherwise whatever directory the session was launched from.
 func (l Location) Name() string {
 	dir := l.Root
 	if dir == "" {
@@ -35,19 +31,12 @@ func (l Location) Name() string {
 	return filepath.Base(dir)
 }
 
-// maxWalk bounds the search for a .git entry. Deeper than any real checkout,
-// and it means a symlink cycle cannot hang a hook that runs on every turn.
+// maxWalk stops a symlink cycle from hanging a hook that runs every turn.
 const maxWalk = 64
 
-// Locate resolves a working directory into a Location.
-//
-// It walks up looking for .git rather than shelling out to git. Stop fires on
-// every turn completion, so this runs constantly; a few Lstat calls cost
-// microseconds where a subprocess costs milliseconds, and it keeps the binary
-// working on a machine with no git on PATH.
-//
-// Never fails: a directory outside any repository is a perfectly good location,
-// and an unreadable .git just means the git fields stay empty.
+// Locate resolves a working directory. It walks up for .git rather than
+// spawning git, which runs in microseconds instead of milliseconds and works
+// with no git on PATH. A directory outside any repository is not an error.
 func Locate(cwd string) Location {
 	loc := Location{CWD: cwd}
 	if cwd == "" {
@@ -60,10 +49,8 @@ func Locate(cwd string) Location {
 		info, err := os.Lstat(gitPath)
 		if err == nil {
 			loc.Root = dir
-			gitDir, common := resolveGitDir(gitPath, info.IsDir(), dir)
-			if common != "" {
-				loc.Repo = filepath.Dir(common)
-			}
+			gitDir := resolveGitDir(gitPath, info.IsDir(), dir)
+			loc.Repo = repoOf(gitDir, dir)
 			loc.Branch = branchOf(gitDir)
 			return loc
 		}
@@ -76,49 +63,68 @@ func Locate(cwd string) Location {
 	return loc
 }
 
-// resolveGitDir returns the directory holding this checkout's HEAD, and the
-// common directory shared with every other worktree of the same repository.
-//
-// For an ordinary clone both are <root>/.git. For a linked worktree, .git is a
-// file pointing at <main>/.git/worktrees/<name>: HEAD lives there, but the
-// common directory is <main>/.git — which is exactly what makes two worktrees
-// recognisable as one repository.
-func resolveGitDir(gitPath string, isDir bool, base string) (gitDir, common string) {
+// resolveGitDir returns the directory holding this checkout's HEAD. For a
+// linked worktree .git is a file pointing elsewhere.
+func resolveGitDir(gitPath string, isDir bool, base string) string {
 	if isDir {
-		return gitPath, gitPath
+		return gitPath
 	}
-
 	data, err := os.ReadFile(gitPath)
 	if err != nil {
-		return "", ""
+		return ""
 	}
-	target := ""
 	for _, line := range strings.Split(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:"); ok {
-			target = strings.TrimSpace(rest)
-			break
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+		if !ok {
+			continue
 		}
+		target := strings.TrimSpace(rest)
+		if target == "" {
+			return ""
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(base, target)
+		}
+		return filepath.Clean(target)
 	}
-	if target == "" {
-		return "", ""
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(base, target)
-	}
-	target = filepath.Clean(target)
-
-	common = target
-	// Also covers submodules, whose gitdir has no /worktrees/ segment and is
-	// therefore already the common directory.
-	if i := strings.Index(target, string(filepath.Separator)+"worktrees"+string(filepath.Separator)); i >= 0 {
-		common = target[:i]
-	}
-	return target, common
+	return ""
 }
 
-// branchOf reads the checked-out branch out of HEAD. A detached HEAD holds a
-// bare sha rather than a ref, and reports no branch rather than a meaningless
-// one.
+// repoOf finds the checkout that sibling worktrees share, by reading the
+// commondir file the way git itself does rather than pattern-matching the path.
+// Layouts differ more than they look: a bare repository sitting directly at the
+// project root has worktrees in <project>/worktrees/<name> with no .git
+// anywhere above them, so splitting the path on "worktrees" would climb one
+// level too far and group every project on the machine together.
+func repoOf(gitDir, base string) string {
+	if gitDir == "" {
+		return ""
+	}
+
+	common := gitDir
+	if data, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+		if target := strings.TrimSpace(string(data)); target != "" {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(gitDir, target)
+			}
+			common = filepath.Clean(target)
+		}
+	}
+
+	switch {
+	case strings.HasPrefix(filepath.Base(common), "."):
+		// .git, or a bare repo conventionally named .bare.
+		return filepath.Dir(common)
+	case strings.Contains(common, string(filepath.Separator)+".git"+string(filepath.Separator)):
+		// A submodule's gitdir lives under the superproject's .git. The
+		// submodule is its own repository, not part of the superproject.
+		return base
+	default:
+		// A bare repository at the project root.
+		return common
+	}
+}
+
 func branchOf(gitDir string) string {
 	if gitDir == "" {
 		return ""
@@ -129,7 +135,7 @@ func branchOf(gitDir string) string {
 	}
 	ref, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "ref: refs/heads/")
 	if !ok {
-		return ""
+		return "" // detached
 	}
 	return ref
 }

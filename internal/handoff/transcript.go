@@ -9,30 +9,22 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// Transcript is everything one pass over a session transcript yields. Reading
-// it is the whole cost of a handoff, so it is deliberately one pass.
+// Transcript is what one pass over a session transcript yields.
 type Transcript struct {
-	// Title is what the session is called: the last /rename if there was one,
-	// else the title Claude generated, else the opening prompt.
-	Title string
-
-	// StartedAt is the first human prompt; SegmentAt is the first human prompt
-	// of the current stretch of work, which differs from StartedAt only after a
-	// /rename part-way through. LastAt is the most recent activity of any kind.
-	StartedAt time.Time
-	SegmentAt time.Time
-	LastAt    time.Time
-
+	Title       string
+	StartedAt   time.Time
+	SegmentAt   time.Time
+	LastAt      time.Time
 	LastTool    string
 	LastMessage string
 }
 
-// Duration is how long the current stretch of work has been running. Measured
-// from SegmentAt rather than StartedAt so that renaming a session part-way —
-// /rename U1, work, /clear, /rename U2 — reports time spent on U2, not the
-// whole evening. Without a rename the two are identical.
+// Duration covers the current stretch of work, measured from the last rename
+// rather than from the session start: renaming is how one session becomes a
+// second piece of work.
 func (t *Transcript) Duration() time.Duration {
 	if t.SegmentAt.IsZero() || t.LastAt.Before(t.SegmentAt) {
 		return 0
@@ -40,16 +32,17 @@ func (t *Transcript) Duration() time.Duration {
 	return t.LastAt.Sub(t.SegmentAt)
 }
 
-// maxMessage caps the stored prompt. The handoff is rewritten on every turn and
-// is meant to be glanced at, so a pasted stack trace is truncated rather than
-// copied in full.
 const maxMessage = 1500
 
-// interesting are the only record types worth decoding. Transcripts reach 13 MB,
-// so lines are matched as raw text first and only the survivors are
-// unmarshalled. The JSON is compact, so these substrings are exact — but they
-// can appear anywhere in the line, not at the front. A false positive is
-// harmless: the decoded type field decides.
+// maxDecode skips lines too big to be anything but a tool payload. Six such
+// lines carried 10 of one 13.6 MB transcript, and decoding them was 140 ms of a
+// 190 ms parse on a hook that runs every turn.
+const maxDecode = 256 << 10
+
+// interesting prefilters lines before the cost of unmarshalling. The whole line
+// is searched, not a prefix: key order is not stable, and assistant records
+// carry the entire message object before their top-level type. A false positive
+// is harmless, since the decoded type decides.
 var interesting = []string{
 	`"type":"user"`,
 	`"type":"assistant"`,
@@ -57,7 +50,6 @@ var interesting = []string{
 	`"type":"custom-title"`,
 }
 
-// record is the subset of a transcript line that a handoff needs.
 type record struct {
 	Type         string    `json:"type"`
 	Timestamp    time.Time `json:"timestamp"`
@@ -70,14 +62,12 @@ type record struct {
 	} `json:"message"`
 }
 
-// block is one element of a structured message content array.
 type block struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 	Name string `json:"name"`
 }
 
-// ReadTranscript parses a Claude Code session transcript.
 func ReadTranscript(path string) (*Transcript, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -96,9 +86,8 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 		segmentPending bool
 	)
 
-	// bufio.Reader, not bufio.Scanner: a single tool_result line routinely
-	// exceeds Scanner's 64 KB token limit, and Scanner would stop at the first
-	// one — silently truncating the parse to the top of the file.
+	// bufio.Reader rather than Scanner: tool_result lines routinely exceed
+	// Scanner's 64 KB token limit, and it would stop at the first one.
 	br := bufio.NewReaderSize(r, 64*1024)
 	for {
 		line, err := br.ReadString('\n')
@@ -106,9 +95,11 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 			if rec, ok := decode(line); ok {
 				switch rec.Type {
 				case "custom-title":
-					// Renaming starts a new stretch of work; the next human
-					// prompt opens it.
-					if rec.CustomTitle != "" {
+					// Only an actual change opens a new stretch of work. These
+					// records are re-emitted every turn, so reacting to each one
+					// would reset the segment continuously and report every
+					// session as minutes long.
+					if rec.CustomTitle != "" && rec.CustomTitle != customTitle {
 						customTitle = rec.CustomTitle
 						segmentPending = true
 					}
@@ -119,8 +110,8 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 				case "user":
 					stamp(&t, rec.Timestamp)
 					// promptSource is what separates a human prompt from the
-					// tool results that are also recorded as user records. The
-					// content shape is not a reliable discriminator.
+					// tool results also recorded as user records; content shape
+					// is not a reliable discriminator.
 					if rec.PromptSource == "" {
 						break
 					}
@@ -153,16 +144,13 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 		}
 	}
 
-	// A rename with no prompt after it leaves the segment where it was rather
-	// than reporting a zero-length one.
 	if t.SegmentAt.IsZero() {
 		t.SegmentAt = t.StartedAt
 	}
 
-	// Precedence matters and is not "the last title record wins": both kinds
-	// are re-emitted throughout the file and interleave, so the final title
-	// record is usually the generated one even in a session that was renamed.
-	// An explicit rename outranks a generated title whenever one exists.
+	// Not "the last title record wins": both kinds are re-emitted and
+	// interleave, so the final record is usually the generated one even in a
+	// session that was explicitly renamed.
 	switch {
 	case customTitle != "":
 		t.Title = customTitle
@@ -174,26 +162,12 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 	return &t, nil
 }
 
-// maxDecode caps the size of a line worth unmarshalling. In a real 13 MB
-// transcript, six tool_result lines carry ten of those megabytes, and decoding
-// them costs 140 ms of a 190 ms parse — on a hook that runs every turn. Nothing
-// that large is ever a typed prompt, and a paste that big would be truncated to
-// maxMessage anyway, so skipping them loses nothing a handoff would show.
-const maxDecode = 256 << 10
-
-// decode rejects uninteresting lines before paying for JSON parsing, and
-// tolerates malformed ones: a transcript being appended to while it is read can
-// end in a partial line, which is not a reason to lose the whole handoff.
+// decode tolerates malformed lines: a transcript being appended to while it is
+// read can end mid-line, which is no reason to lose the handoff.
 func decode(line string) (record, bool) {
 	if len(line) > maxDecode {
 		return record{}, false
 	}
-	// The whole line is scanned, not a prefix of it: key order is not stable.
-	// Assistant records lead with parentUuid and carry the entire message
-	// object — thinking blocks included — before the top-level "type", which
-	// lands 1800 bytes in. Bounding this to a prefix dropped 216 of 217
-	// assistant records in a real transcript while looking like it worked.
-	// Scanning in full is not the expensive part anyway; decoding is.
 	match := false
 	for _, m := range interesting {
 		if strings.Contains(line, m) {
@@ -208,8 +182,8 @@ func decode(line string) (record, bool) {
 	if err := json.Unmarshal([]byte(line), &rec); err != nil {
 		return record{}, false
 	}
-	// Subagent records carry the parent's session id but describe work the
-	// human never typed, so they must not become the last message.
+	// Subagent records carry the parent's session id but describe work nobody
+	// typed, so they must not become the last message.
 	if rec.IsSidechain {
 		return record{}, false
 	}
@@ -222,9 +196,8 @@ func stamp(t *Transcript, ts time.Time) {
 	}
 }
 
-// textOf pulls readable text out of a message content field, which is a bare
-// string for a typed prompt and an array of blocks once images or attachments
-// are involved.
+// textOf reads a message content field, which is a bare string for a typed
+// prompt and an array of blocks once images or attachments are involved.
 func textOf(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -246,7 +219,6 @@ func textOf(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// toolOf returns the last tool invoked in one assistant message.
 func toolOf(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -264,9 +236,14 @@ func toolOf(raw json.RawMessage) string {
 	return name
 }
 
+// truncate cuts on a rune boundary; splitting a multi-byte character leaves
+// invalid UTF-8 that survives into the rendered file.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return strings.TrimSpace(s[:n]) + "…"
 }

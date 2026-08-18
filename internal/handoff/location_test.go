@@ -58,6 +58,10 @@ func TestLocateWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wtGitDir, "HEAD"), []byte("ref: refs/heads/u2-handoff-writer\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// git always writes commondir, and it is how the shared repository is found.
+	if err := os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -109,5 +113,105 @@ func TestLocateDetachedHeadReportsNoBranch(t *testing.T) {
 func TestLocateEmptyCWD(t *testing.T) {
 	if got := Locate(""); got.Name() != "(unknown)" {
 		t.Errorf("Name() = %q, want %q", got.Name(), "(unknown)")
+	}
+}
+
+// mkWorktree writes a linked worktree: a .git file pointing at gitDir, which
+// holds HEAD and the commondir pointer git uses to find the shared repository.
+func mkWorktree(t *testing.T, root, gitDir, commondir, branch string) {
+	t.Helper()
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/"+branch+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte(commondir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLocateBareRepoAtProjectRoot covers a layout with no .git or .bare above
+// the checkouts at all: the repository lives directly at the project root and
+// its worktrees sit beside it. Splitting the gitdir path on "worktrees" climbs
+// one level too far here and lands on the directory holding every project.
+func TestLocateBareRepoAtProjectRoot(t *testing.T) {
+	tmp := t.TempDir()
+	proj := filepath.Join(tmp, "automateideasai.com")
+
+	mkWorktree(t, filepath.Join(proj, "main"), filepath.Join(proj, "worktrees", "main"), "../..", "main")
+	mkWorktree(t, filepath.Join(proj, "ad-banner"), filepath.Join(proj, "worktrees", "ad-banner"), "../..", "fix/ad-banner")
+
+	first := Locate(filepath.Join(proj, "main"))
+	second := Locate(filepath.Join(proj, "ad-banner"))
+
+	if first.Repo != proj {
+		t.Errorf("Repo = %q, want the project root %q", first.Repo, proj)
+	}
+	if first.Repo != second.Repo {
+		t.Errorf("sibling worktrees disagree on Repo: %q vs %q", first.Repo, second.Repo)
+	}
+	if first.Root == second.Root {
+		t.Error("sibling worktrees must keep distinct Roots")
+	}
+	if second.Branch != "fix/ad-banner" {
+		t.Errorf("Branch = %q, want fix/ad-banner", second.Branch)
+	}
+	if first.Repo == filepath.Dir(proj) {
+		t.Fatalf("Repo climbed past the project to %q — every project would group together", first.Repo)
+	}
+}
+
+// TestLocateBareDirLayout covers the other bare convention, a .bare directory
+// beside the worktrees.
+func TestLocateBareDirLayout(t *testing.T) {
+	tmp := t.TempDir()
+	proj := filepath.Join(tmp, "proj")
+	mkWorktree(t, filepath.Join(proj, "feat"), filepath.Join(proj, ".bare", "worktrees", "feat"), "../..", "feat")
+
+	if got := Locate(filepath.Join(proj, "feat")); got.Repo != proj {
+		t.Errorf("Repo = %q, want %q", got.Repo, proj)
+	}
+}
+
+// TestLocateSubmodule: a submodule's gitdir lives under the superproject's
+// .git, but the submodule is its own repository. Resolving it to the
+// superproject would group every submodule of a repo into one line.
+func TestLocateSubmodule(t *testing.T) {
+	tmp := t.TempDir()
+	super := filepath.Join(tmp, "super")
+	mkGitDir(t, super, "ref: refs/heads/main\n")
+
+	var repos []string
+	for _, name := range []string{"lib-a", "lib-b"} {
+		sub := filepath.Join(super, name)
+		gitDir := filepath.Join(super, ".git", "modules", name)
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		got := Locate(sub)
+		if got.Repo != sub {
+			t.Errorf("%s: Repo = %q, want the submodule itself %q", name, got.Repo, sub)
+		}
+		repos = append(repos, got.Repo)
+	}
+	if repos[0] == repos[1] {
+		t.Errorf("both submodules resolved to %q — unrelated repos collapsed into one group", repos[0])
 	}
 }

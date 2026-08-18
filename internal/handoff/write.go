@@ -1,18 +1,12 @@
-// Package handoff records what a session was doing, so the morning brief can
-// answer "where did we leave off" without anyone opening a transcript.
+// Package handoff records what a session was doing, so the brief can answer
+// "where did we leave off" without anyone opening a transcript.
 //
-// One file per session id, in a central store, deliberately:
-//
-//   - Central, not the project directory. The hooks are global, so cwd is any
-//     directory Claude is launched in. Writing there puts an untrusted file in
-//     git repos, copies typed prose into employer repositories, and turns
-//     vault subfolders into carriers of stray notes.
-//   - Per session, not per project. Stop fires on every turn, and two sessions
-//     open in the same folder is the normal working pattern, not an edge case;
-//     a shared file would have them overwriting each other all evening.
-//
-// v0.1 is the raw record only — times, status, last tool, last prompt. Decision
-// and blocker extraction is v0.2.
+// One file per session, in a central store. Central because the hooks are
+// global, so cwd is any directory Claude is launched in — writing there would
+// put an untracked file in git repos, copy typed prose into employer
+// repositories, and drop stray notes into vault folders. Per session because
+// Stop fires every turn and two sessions in one folder is the normal working
+// pattern; a shared file would have them overwriting each other.
 package handoff
 
 import (
@@ -32,16 +26,15 @@ const (
 	filePerm fs.FileMode = 0o600
 )
 
-// Handoff is one session's record. The identity fields are all recorded rather
-// than collapsed into a single "project", because which of them *is* the
-// project is a question the reader answers, not the writer: a worktree is a
-// task, a folder can host three unrelated workstreams, and a title is whatever
-// the session was renamed to. Choosing here would mean rewriting history to
-// change the grouping later.
+// Handoff is one session's record. Every identity field is stored rather than
+// collapsed into a single project, because which of them is the project is the
+// reader's question: a worktree is a task, a folder can host several unrelated
+// workstreams, a title is whatever the session was renamed to. Choosing here
+// would mean rewriting history to change the grouping.
 type Handoff struct {
 	SessionID string
 	Title     string
-	Project   string // explicit label from MINDSKEIN_PROJECT; usually empty
+	Project   string
 	CWD       string
 	RepoRoot  string
 	Repo      string
@@ -54,7 +47,6 @@ type Handoff struct {
 	Message   string
 }
 
-// Duration is the length of the current stretch of work.
 func (h *Handoff) Duration() time.Duration {
 	if h.SegmentAt.IsZero() || h.EndedAt.Before(h.SegmentAt) {
 		return 0
@@ -62,12 +54,11 @@ func (h *Handoff) Duration() time.Duration {
 	return h.EndedAt.Sub(h.SegmentAt)
 }
 
-// Name is the short location label — the worktree or folder the session ran in.
 func (h *Handoff) Name() string {
 	return Location{CWD: h.CWD, Root: h.RepoRoot}.Name()
 }
 
-// Label is what to call this session on screen, preferring what a human chose.
+// Label prefers what a human chose over what was generated.
 func (h *Handoff) Label() string {
 	switch {
 	case h.Project != "":
@@ -79,12 +70,10 @@ func (h *Handoff) Label() string {
 	}
 }
 
-// Store holds one markdown file per session under ~/.mindskein/handoffs.
 type Store struct {
 	Dir string
 }
 
-// DefaultStore is the store the Stop hook writes and the brief reads.
 func DefaultStore() (*Store, error) {
 	home, err := session.Home()
 	if err != nil {
@@ -93,7 +82,6 @@ func DefaultStore() (*Store, error) {
 	return &Store{Dir: filepath.Join(home, "handoffs")}, nil
 }
 
-// Path is the file backing a session id.
 func (s *Store) Path(id string) (string, error) {
 	safe, err := session.SafeID(id)
 	if err != nil {
@@ -102,10 +90,9 @@ func (s *Store) Path(id string) (string, error) {
 	return filepath.Join(s.Dir, safe+".md"), nil
 }
 
-// Record builds a handoff from a finished turn and writes it.
-//
-// A missing or unreadable transcript is not fatal: the session record alone
-// still answers where you were, and refusing to write would lose that too.
+// Record builds a handoff from a finished turn and writes it. A missing or
+// unreadable transcript still produces one: the session record alone answers
+// where you were, and refusing to write would lose that too.
 func Record(store *Store, sess *session.Session, transcriptPath, project string, now time.Time) (*Handoff, error) {
 	loc := Locate(sess.ProjectPath)
 	h := &Handoff{
@@ -119,21 +106,21 @@ func Record(store *Store, sess *session.Session, transcriptPath, project string,
 		StartedAt: sess.StartedAt,
 		SegmentAt: sess.StartedAt,
 		EndedAt:   now,
-		LastTool:  sess.LastEvent,
 	}
 
+	// LastTool deliberately does not fall back to the session record: this runs
+	// on Stop, and the Stop handler has already overwritten the tool name with
+	// its own event. The transcript is the only source that still knows.
 	if transcriptPath != "" {
 		if tr, err := ReadTranscript(transcriptPath); err == nil {
 			h.Title = tr.Title
 			h.Message = tr.LastMessage
+			h.LastTool = tr.LastTool
 			if !tr.StartedAt.IsZero() {
 				h.StartedAt = tr.StartedAt
 			}
 			if !tr.SegmentAt.IsZero() {
 				h.SegmentAt = tr.SegmentAt
-			}
-			if tr.LastTool != "" {
-				h.LastTool = tr.LastTool
 			}
 		}
 	}
@@ -141,9 +128,8 @@ func Record(store *Store, sess *session.Session, transcriptPath, project string,
 	return h, store.Write(h)
 }
 
-// Write saves the handoff atomically, by the same temp-then-rename route the
-// session store uses: a brief reading mid-write sees the previous file whole
-// rather than half of the new one.
+// Write saves atomically by temp-then-rename, so a concurrent read sees the
+// previous file whole rather than half of the new one.
 func (s *Store) Write(h *Handoff) error {
 	path, err := s.Path(h.SessionID)
 	if err != nil {
@@ -158,7 +144,7 @@ func (s *Store) Write(h *Handoff) error {
 		return fmt.Errorf("creating temp file in %s: %w", s.Dir, err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
+	defer os.Remove(tmpName)
 
 	if _, err := tmp.WriteString(h.Markdown()); err != nil {
 		tmp.Close()
@@ -176,10 +162,9 @@ func (s *Store) Write(h *Handoff) error {
 	return nil
 }
 
-// Markdown renders the file: quoted frontmatter for the reader, prose below it
-// for a human. Values are quoted rather than left bare because paths and titles
-// contain spaces, colons and unicode, and a hand-rolled parser should not have
-// to guess where one ends.
+// Markdown renders frontmatter for the reader and prose for a human. Values are
+// quoted because paths and titles contain spaces, colons and newlines, and a
+// hand-rolled parser should not have to guess where one ends.
 func (h *Handoff) Markdown() string {
 	var b strings.Builder
 
@@ -194,6 +179,7 @@ func (h *Handoff) Markdown() string {
 		{"branch", h.Branch},
 		{"status", h.Status},
 		{"last_tool", h.LastTool},
+		{"message", h.Message},
 	} {
 		fmt.Fprintf(&b, "%s: %s\n", f.k, strconv.Quote(f.v))
 	}

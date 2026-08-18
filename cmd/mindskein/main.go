@@ -1,12 +1,11 @@
 // Command mindskein answers the morning question: what are my priorities,
 // what's running elsewhere, and where did we leave off?
 //
-// v0.1 scope and the unit breakdown live in the vault:
-// "MindSkein v0.1 — mindskein brief". This file is the U0 dispatch skeleton;
-// each subcommand is filled in by the unit named in its handler.
+// Scope and roadmap live in the vault, not in this repo.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -88,20 +87,15 @@ func usage(w io.Writer, commands []command) {
 	fmt.Fprintln(w, "Run 'mindskein <command> -h' for details on a command.")
 }
 
-// notImplemented is what every handler returns until its unit lands. It keeps
-// the skeleton honest: the command exists, is dispatchable, and says who owns it.
-func notImplemented(unit string) error {
-	return fmt.Errorf("not implemented yet — lands with %s", unit)
-}
+// errNotImplemented keeps a command dispatchable before it does anything, so
+// the usage text and the command set stay honest.
+var errNotImplemented = errors.New("not implemented yet")
 
-func cmdBrief([]string, io.Reader) error      { return notImplemented("U4 (brief renderer)") }
-func cmdPriorities([]string, io.Reader) error { return notImplemented("U3 (priorities parser)") }
+func cmdBrief([]string, io.Reader) error      { return errNotImplemented }
+func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
 
-// cmdStatus prints the live sessions section on its own — the mid-day check,
-// and the only way to read the registry without opening the JSON by hand.
-//
-// U4 still owns `brief`, which composes this block with priorities and
-// handoffs. This lands early because U1 is not dogfoodable without it.
+// cmdStatus prints the live sessions block on its own: the mid-day check, and
+// the only way to read the registry without opening the JSON by hand.
 func cmdStatus(_ []string, stdout io.Writer) error {
 	store, err := session.DefaultStore()
 	if err != nil {

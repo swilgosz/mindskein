@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // line helpers keep the fixtures readable; real transcripts are compact JSONL.
@@ -39,11 +40,11 @@ func TestTitlePrecedenceRenameBeatsGeneratedTitle(t *testing.T) {
 	tr := parse(t,
 		`{"type":"ai-title","aiTitle":"MindSkein v0.1 project brief"}`,
 		userLine("2026-08-18T08:00:00Z", "typed", "start"),
-		`{"type":"custom-title","customTitle":"U2"}`,
+		`{"type":"custom-title","customTitle":"handoff writer"}`,
 		`{"type":"ai-title","aiTitle":"MindSkein v0.1 project brief"}`,
 	)
-	if tr.Title != "U2" {
-		t.Errorf("Title = %q, want %q — an explicit rename outranks a generated title", tr.Title, "U2")
+	if tr.Title != "handoff writer" {
+		t.Errorf("Title = %q, want %q — an explicit rename outranks a generated title", tr.Title, "handoff writer")
 	}
 }
 
@@ -93,15 +94,15 @@ func TestSidechainRecordsAreIgnored(t *testing.T) {
 // should report time on the current work, not the whole evening.
 func TestDurationMeasuredFromSegment(t *testing.T) {
 	tr := parse(t,
-		`{"type":"custom-title","customTitle":"U1"}`,
-		userLine("2026-08-18T08:00:00Z", "typed", "work on U1"),
+		`{"type":"custom-title","customTitle":"capture"}`,
+		userLine("2026-08-18T08:00:00Z", "typed", "work on capture"),
 		assistantToolLine("2026-08-18T09:00:00Z", "Edit"),
-		`{"type":"custom-title","customTitle":"U2"}`,
-		userLine("2026-08-18T12:00:00Z", "typed", "now work on U2"),
+		`{"type":"custom-title","customTitle":"writer"}`,
+		userLine("2026-08-18T12:00:00Z", "typed", "now work on the writer"),
 		assistantToolLine("2026-08-18T12:30:00Z", "Bash"),
 	)
-	if tr.Title != "U2" {
-		t.Fatalf("Title = %q, want U2", tr.Title)
+	if tr.Title != "writer" {
+		t.Fatalf("Title = %q, want writer", tr.Title)
 	}
 	if want := 30 * time.Minute; tr.Duration() != want {
 		t.Errorf("Duration() = %v, want %v — measured from the rename, not session start", tr.Duration(), want)
@@ -209,5 +210,51 @@ func TestTypeKeyIsNotAlwaysFirst(t *testing.T) {
 	)
 	if tr.LastTool != "Grep" {
 		t.Errorf("LastTool = %q, want %q — the prefilter must scan the whole line", tr.LastTool, "Grep")
+	}
+}
+
+// TestRepeatedTitleRecordsDoNotResetTheSegment: title records are re-emitted
+// every turn, so reacting to each one restarts the segment continuously and
+// reports every renamed session as a few minutes long.
+func TestRepeatedTitleRecordsDoNotResetTheSegment(t *testing.T) {
+	lines := []string{
+		`{"type":"custom-title","customTitle":"writer"}`,
+		userLine("2026-08-18T08:00:00Z", "typed", "start the work"),
+	}
+	// Six turns, each re-emitting the unchanged title before the next prompt.
+	for h := 9; h < 15; h++ {
+		ts := "2026-08-18T" + string(rune('0'+h/10)) + string(rune('0'+h%10)) + ":00:00Z"
+		lines = append(lines,
+			`{"type":"custom-title","customTitle":"writer"}`,
+			userLine(ts, "typed", "keep going"),
+		)
+	}
+	tr := parse(t, lines...)
+
+	if want := 6 * time.Hour; tr.Duration() != want {
+		t.Errorf("Duration() = %v, want %v — an unchanged title must not restart the segment",
+			tr.Duration(), want)
+	}
+}
+
+func TestTruncateCutsOnRuneBoundary(t *testing.T) {
+	// Cutting mid-character would leave invalid UTF-8 in the rendered file.
+	for _, s := range []string{
+		strings.Repeat("ą", 200),
+		strings.Repeat("🧵", 200),
+		strings.Repeat("e", 59) + "ł" + strings.Repeat("e", 100),
+	} {
+		got := truncate(s, 60)
+		if !utf8.ValidString(got) {
+			t.Errorf("truncate(%.10q…) produced invalid UTF-8: %q", s, got)
+		}
+	}
+}
+
+func TestTitleFromUnicodePromptStaysValid(t *testing.T) {
+	long := strings.Repeat("zażółć gęślą jaźń ", 10)
+	tr := parse(t, userLine("2026-08-18T08:00:00Z", "typed", long))
+	if !utf8.ValidString(tr.Title) {
+		t.Errorf("Title is not valid UTF-8: %q", tr.Title)
 	}
 }

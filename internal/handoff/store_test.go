@@ -23,7 +23,7 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 	store := &Store{Dir: t.TempDir()}
 	want := &Handoff{
 		SessionID: "7d98bd67-c67e-42fa-8c74-1814bb5f0481",
-		Title:     "U2",
+		Title:     "handoff writer",
 		Project:   "Content W35",
 		CWD:       "/Users/sebastian/SecondBrain/6. Spaces/62. Business",
 		RepoRoot:  "/Users/sebastian/Projects/mindskein",
@@ -58,6 +58,9 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 		{"Branch", got.Branch, want.Branch},
 		{"Status", got.Status, want.Status},
 		{"LastTool", got.LastTool, want.LastTool},
+		// Message must survive the round trip: the brief reads these files
+		// programmatically, and "where did we leave off" is the whole point.
+		{"Message", got.Message, want.Message},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -76,7 +79,7 @@ func TestWriteIsReadableByHand(t *testing.T) {
 	store := &Store{Dir: t.TempDir()}
 	h := &Handoff{
 		SessionID: "abc12345-0000",
-		Title:     "U2",
+		Title:     "handoff writer",
 		CWD:       "/Users/sebastian/Projects/mindskein",
 		RepoRoot:  "/Users/sebastian/Projects/mindskein",
 		Branch:    "u2-handoff-writer",
@@ -96,7 +99,7 @@ func TestWriteIsReadableByHand(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"# MindSkein Handoff — U2",
+		"# MindSkein Handoff — handoff writer",
 		"1h 5m",
 		"**Last tool:** Bash",
 		"u2-handoff-writer",
@@ -117,7 +120,7 @@ func TestWriteIsReadableByHand(t *testing.T) {
 	}
 }
 
-// TestConcurrentSessionsInOneFolderBothSurvive is the U2 DoD, and the reason
+// TestConcurrentSessionsInOneFolderBothSurvive is the reason
 // handoffs are keyed by session rather than by project.
 func TestConcurrentSessionsInOneFolderBothSurvive(t *testing.T) {
 	store := &Store{Dir: t.TempDir()}
@@ -185,6 +188,24 @@ func TestListSortsNewestFirstAndSkipsJunk(t *testing.T) {
 	}
 }
 
+// TestMultilineMessageSurvivesTheRoundTrip: the prompt is stored as a quoted
+// frontmatter value, so newlines must not break the parser.
+func TestMultilineMessageSurvivesTheRoundTrip(t *testing.T) {
+	store := &Store{Dir: t.TempDir()}
+	msg := "first line\nsecond: with a colon\n\tand a tab — plus zażółć gęślą"
+	if err := store.Write(&Handoff{SessionID: "eeee5555", Message: msg}); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := store.Path("eeee5555")
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Message != msg {
+		t.Errorf("Message = %q, want %q", got.Message, msg)
+	}
+}
+
 func TestListOnMissingDirectory(t *testing.T) {
 	store := &Store{Dir: filepath.Join(t.TempDir(), "never-created")}
 	list, err := store.List()
@@ -196,8 +217,8 @@ func TestListOnMissingDirectory(t *testing.T) {
 func TestNewestPerGroupsByChosenKey(t *testing.T) {
 	repo := "/Users/sebastian/Projects/mindskein"
 	list := []*Handoff{
-		{SessionID: "s3", Title: "U2", Repo: repo, EndedAt: at(t, "2026-08-18T18:00:00Z")},
-		{SessionID: "s2", Title: "U1", Repo: repo, EndedAt: at(t, "2026-08-18T13:00:00Z")},
+		{SessionID: "s3", Title: "writer", Repo: repo, EndedAt: at(t, "2026-08-18T18:00:00Z")},
+		{SessionID: "s2", Title: "capture", Repo: repo, EndedAt: at(t, "2026-08-18T13:00:00Z")},
 		{SessionID: "s1", Title: "Content", CWD: "/vault/62. Business", EndedAt: at(t, "2026-08-18T09:00:00Z")},
 	}
 
@@ -223,8 +244,16 @@ func TestRecordWithoutTranscriptStillWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Record with a missing transcript = %v, want a handoff anyway", err)
 	}
-	if h.LastTool != "Edit" || h.Duration() != 45*time.Minute {
-		t.Errorf("fell back badly: LastTool=%q Duration=%v", h.LastTool, h.Duration())
+	if h.Duration() != 45*time.Minute {
+		t.Errorf("Duration = %v, want 45m from the session record", h.Duration())
+	}
+	// The session record cannot supply the tool: by the time this runs, the Stop
+	// handler has already overwritten LastEvent with its own event name.
+	if h.LastTool != "" {
+		t.Errorf("LastTool = %q, want empty rather than a hook event name", h.LastTool)
+	}
+	if !strings.Contains(h.Markdown(), "**Last tool:** —") {
+		t.Error("an unknown tool should render as a dash")
 	}
 	if h.Label() != "mindskein" {
 		t.Errorf("Label() = %q, want the folder name when there is no title", h.Label())

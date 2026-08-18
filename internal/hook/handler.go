@@ -3,8 +3,6 @@
 //
 // Events handled: pre-tool-use (running), notification (waiting, on
 // idle_prompt / permission_prompt), stop (done).
-//
-// Implemented by U1 (hook capture + session registry).
 package hook
 
 import (

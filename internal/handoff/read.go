@@ -48,8 +48,8 @@ func (s *Store) List() ([]*Handoff, error) {
 	return handoffs, nil
 }
 
-// Load reads one handoff. Only the frontmatter is parsed — the prose below it
-// is a rendering of the same fields, for whoever opens the file by hand.
+// Load reads one handoff. Only the frontmatter is parsed; the prose below is a
+// rendering of the same fields, for whoever opens the file by hand.
 func Load(path string) (*Handoff, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -95,6 +95,8 @@ func Load(path string) (*Handoff, error) {
 			h.Status = value
 		case "last_tool":
 			h.LastTool = value
+		case "message":
+			h.Message = value
 		case "started_at":
 			h.StartedAt = parseTime(value)
 		case "segment_at":
@@ -118,12 +120,9 @@ func parseTime(s string) time.Time {
 }
 
 // NewestPer collapses a list to the most recent handoff per group, preserving
-// the order of the input.
-//
-// The grouping function is the caller's, not this package's. What counts as a
-// project depends on the question being asked — one line per repository, per
-// worktree, or per named workstream — and the writer deliberately records all
-// of those rather than picking one. U4 chooses when it composes the brief.
+// input order. The grouping function is the caller's: what counts as a project
+// depends on the question being asked, and the writer records every identity
+// rather than picking one.
 func NewestPer(handoffs []*Handoff, key func(*Handoff) string) []*Handoff {
 	seen := make(map[string]bool, len(handoffs))
 	var out []*Handoff
@@ -138,9 +137,8 @@ func NewestPer(handoffs []*Handoff, key func(*Handoff) string) []*Handoff {
 	return out
 }
 
-// ByLocation groups handoffs by where the session ran, collapsing every
-// worktree of a repository onto the repository itself. A reasonable default,
-// and the one the brief starts with.
+// ByLocation groups by where the session ran, collapsing a repository's
+// worktrees onto the repository.
 func ByLocation(h *Handoff) string {
 	if h.Repo != "" {
 		return h.Repo
@@ -148,6 +146,6 @@ func ByLocation(h *Handoff) string {
 	return h.CWD
 }
 
-// BySession keeps every session separate — the grouping that matches how the
-// same folder hosts several unrelated workstreams at once.
+// BySession keeps every session separate, matching how one folder hosts
+// several unrelated workstreams at once.
 func BySession(h *Handoff) string { return h.SessionID }
