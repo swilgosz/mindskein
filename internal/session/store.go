@@ -231,3 +231,8 @@ func (s *Store) List() ([]*Session, error) {
 	})
 	return sessions, nil
 }
+
+// SafeID validates that an untrusted session id can be used as a filename,
+// exported for the handoff store, which files records by the same id and must
+// apply exactly the same rule.
+func SafeID(id string) (string, error) { return safeID(id) }
