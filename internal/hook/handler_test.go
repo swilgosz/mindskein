@@ -182,7 +182,7 @@ func TestHandleFullLifecycle(t *testing.T) {
 	}
 }
 
-// TestHandleConcurrentSessionsStaySeparate is the two-repo half of the U1 DoD.
+// TestHandleConcurrentSessionsStaySeparate covers two repositories at once.
 func TestHandleConcurrentSessionsStaySeparate(t *testing.T) {
 	store := testStore(t)
 	now := time.Date(2026, 8, 17, 21, 0, 0, 0, time.UTC)

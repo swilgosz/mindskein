@@ -1,12 +1,11 @@
 // Command mindskein answers the morning question: what are my priorities,
 // what's running elsewhere, and where did we leave off?
 //
-// v0.1 scope and the unit breakdown live in the vault:
-// "MindSkein v0.1 — mindskein brief". This file is the U0 dispatch skeleton;
-// each subcommand is filled in by the unit named in its handler.
+// Scope and roadmap live in the vault, not in this repo.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
 	"github.com/swilgosz/mindskein/internal/session"
 )
@@ -87,20 +87,15 @@ func usage(w io.Writer, commands []command) {
 	fmt.Fprintln(w, "Run 'mindskein <command> -h' for details on a command.")
 }
 
-// notImplemented is what every handler returns until its unit lands. It keeps
-// the skeleton honest: the command exists, is dispatchable, and says who owns it.
-func notImplemented(unit string) error {
-	return fmt.Errorf("not implemented yet — lands with %s", unit)
-}
+// errNotImplemented keeps a command dispatchable before it does anything, so
+// the usage text and the command set stay honest.
+var errNotImplemented = errors.New("not implemented yet")
 
-func cmdBrief([]string, io.Reader) error      { return notImplemented("U4 (brief renderer)") }
-func cmdPriorities([]string, io.Reader) error { return notImplemented("U3 (priorities parser)") }
+func cmdBrief([]string, io.Reader) error      { return errNotImplemented }
+func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
 
-// cmdStatus prints the live sessions section on its own — the mid-day check,
-// and the only way to read the registry without opening the JSON by hand.
-//
-// U4 still owns `brief`, which composes this block with priorities and
-// handoffs. This lands early because U1 is not dogfoodable without it.
+// cmdStatus prints the live sessions block on its own: the mid-day check, and
+// the only way to read the registry without opening the JSON by hand.
 func cmdStatus(_ []string, stdout io.Writer) error {
 	store, err := session.DefaultStore()
 	if err != nil {
@@ -149,7 +144,31 @@ func handleHook(event hook.Event, stdin io.Reader) error {
 	// os.Getppid is the process that spawned the hook. Command hooks run
 	// through a shell, so this is best-effort provenance rather than a
 	// reliable handle on the Claude process; nothing keys off it yet.
-	_, err = hook.Handle(store, event, payload, time.Now().UTC(), os.Getppid())
+	now := time.Now().UTC()
+	sess, err := hook.Handle(store, event, payload, now, os.Getppid())
+	if err != nil || sess == nil {
+		return err
+	}
+	if event != hook.EventStop {
+		return nil
+	}
+	return recordHandoff(sess, payload, now)
+}
+
+// recordHandoff writes the session handoff once a turn completes.
+//
+// Only Stop does this. It is the one event that fires where "where did we leave
+// off" has an answer, and the only one that can afford the transcript read:
+// PreToolUse runs on every single tool call and must never parse a 13 MB file.
+func recordHandoff(sess *session.Session, payload *hook.Payload, now time.Time) error {
+	store, err := handoff.DefaultStore()
+	if err != nil {
+		return err
+	}
+	// MINDSKEIN_PROJECT lets a session opt into a named workstream spanning
+	// folders and sessions — export it before launching Claude. Empty is the
+	// normal case, and the reader falls back to the session title.
+	_, err = handoff.Record(store, sess, payload.TranscriptPath, os.Getenv("MINDSKEIN_PROJECT"), now)
 	return err
 }
 

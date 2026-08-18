@@ -96,7 +96,7 @@ func TestRunStatusOnEmptyRegistry(t *testing.T) {
 	}
 }
 
-// TestRunHookWritesSession is the CLI-level half of the U1 DoD: a payload on
+// TestRunHookWritesSession covers the CLI half of hook capture: a payload on
 // stdin lands as a session file under MINDSKEIN_HOME.
 func TestRunHookWritesSession(t *testing.T) {
 	home := t.TempDir()
@@ -152,5 +152,85 @@ func TestRunHookSwallowsBadPayload(t *testing.T) {
 	// The escape attempt must not have written anything outside the store.
 	if _, err := os.Stat(filepath.Join(filepath.Dir(home), "escape.json")); err == nil {
 		t.Error("path traversal in session_id escaped the sessions directory")
+	}
+}
+
+// writeTranscript drops a minimal but realistic transcript on disk.
+func writeTranscript(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "transcript.jsonl")
+	lines := []string{
+		`{"type":"ai-title","aiTitle":"Work on the handoff writer"}`,
+		`{"type":"user","timestamp":"2026-08-18T12:00:00Z","promptSource":"typed","message":{"role":"user","content":"wire up the writer"}}`,
+		`{"type":"assistant","timestamp":"2026-08-18T12:01:00Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write"}]}}`,
+		`{"type":"user","timestamp":"2026-08-18T12:01:01Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+		`{"type":"custom-title","customTitle":"handoff writer"}`,
+		`{"type":"ai-title","aiTitle":"Work on the handoff writer"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestStopHookWritesHandoff covers the point of the feature: finishing a turn leaves
+// a readable handoff, without anyone opening the transcript.
+func TestStopHookWritesHandoff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+	transcript := writeTranscript(t, t.TempDir())
+
+	payload := `{"session_id":"e0cc146a","cwd":"/Users/seb/Projects/mindskein",` +
+		`"transcript_path":"` + transcript + `","hook_event_name":"Stop"}`
+	if err := run([]string{"hook", "stop"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(hook stop) = %v, want nil", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "handoffs", "e0cc146a.md"))
+	if err != nil {
+		t.Fatalf("reading handoff: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		`title: "handoff writer"`, // the rename, not the generated title
+		`last_tool: "Write"`,      // from the transcript, not the session record
+		"# MindSkein Handoff — handoff writer",
+		"## Next Action",
+		"> wire up the writer",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("handoff missing %q\ngot:\n%s", want, body)
+		}
+	}
+}
+
+// TestPreToolUseWritesNoHandoff protects the cost guarantee: PreToolUse fires
+// on every tool call and must never parse a transcript.
+func TestPreToolUseWritesNoHandoff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+	transcript := writeTranscript(t, t.TempDir())
+
+	payload := `{"session_id":"e0cc146a","cwd":"/tmp","transcript_path":"` + transcript + `","tool_name":"Edit"}`
+	if err := run([]string{"hook", "pre-tool-use"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "handoffs")); !os.IsNotExist(err) {
+		t.Error("PreToolUse created a handoff directory — the transcript must not be read on every tool call")
+	}
+}
+
+// TestStopHookSurvivesAMissingTranscript: the session record alone still
+// answers where you were, and a hook must never fail the session.
+func TestStopHookSurvivesAMissingTranscript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"dddd4444","cwd":"/tmp/x","transcript_path":"/nope/missing.jsonl"}`
+	if err := run([]string{"hook", "stop"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(hook stop) = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "handoffs", "dddd4444.md")); err != nil {
+		t.Errorf("no handoff written despite a usable session record: %v", err)
 	}
 }

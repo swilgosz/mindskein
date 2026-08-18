@@ -13,9 +13,9 @@ const maxProjectWidth = 28
 // Render writes the LIVE SESSIONS block — the whole of `mindskein status`, and
 // one of the three sections of the morning brief.
 //
-// It lives here rather than in internal/brief because U1 owns the record, so it
-// owns presenting it; U4 composes this block with the priorities and handoff
-// sections instead of reimplementing it.
+// It lives here rather than in internal/brief because the package that owns the
+// record owns presenting it; the brief composes this block rather than
+// reimplementing it.
 func Render(w io.Writer, sessions []*Session, now time.Time) error {
 	if _, err := fmt.Fprintln(w, "LIVE SESSIONS"); err != nil {
 		return err

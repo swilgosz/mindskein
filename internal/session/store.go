@@ -13,9 +13,7 @@ import (
 )
 
 // Store reads and writes ~/.mindskein/sessions/{session_id}.json with atomic
-// writes, so a half-written file is never observable by a concurrent brief.
-//
-// Implemented by U1 (hook capture + session registry).
+// writes, so a half-written file is never observable by a concurrent reader.
 type Store struct {
 	Dir string
 }
@@ -231,3 +229,8 @@ func (s *Store) List() ([]*Session, error) {
 	})
 	return sessions, nil
 }
+
+// SafeID validates that an untrusted session id can be used as a filename,
+// exported for the handoff store, which files records by the same id and must
+// apply exactly the same rule.
+func SafeID(id string) (string, error) { return safeID(id) }
