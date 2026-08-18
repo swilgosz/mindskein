@@ -50,7 +50,45 @@ that pins the behaviour.
 ```
 go build ./... && go vet ./... && go test ./...
 gofmt -l .
+scripts/scenarios.sh      # behaviour still specified but not implemented
+scripts/cover.sh 85       # total coverage with -coverpkg, fails below 85%
 ```
 
 CI runs the same three against the version in `go.mod`, which is the minimum
 supported Go, not the local toolchain.
+
+## Tests come from the spec, and come first
+
+The failure mode this guards against: tests written *after* the code describe
+what the code does, not what it should do. Both then encode the same wrong
+assumption, and a green suite proves nothing. That has already happened in this
+repo — a passing test confirmed a duration bug because the same mistaken model
+produced both the implementation and its test.
+
+So:
+
+1. **Derive scenarios from the vault spec**, before writing the implementation.
+   The definition of done in the roadmap is the list; each bullet becomes at
+   least one scenario, named as a sentence about behaviour.
+2. **Scaffold them as failing scenarios first**, in `<pkg>_scenarios_test.go`:
+
+   ```go
+   func pending(t *testing.T, behaviour string) {
+       t.Helper()
+       t.Fatalf("PENDING: %s", behaviour)
+   }
+
+   func TestPriorities(t *testing.T) {
+       t.Run("resolves a wikilink to its display label", func(t *testing.T) {
+           pending(t, "resolves a wikilink to its display label")
+       })
+   }
+   ```
+
+   Never `t.Skip` for this. A skipped test reports green for work not done.
+3. **Implement until green.** `scripts/scenarios.sh` prints what remains;
+   `go test ./...` is the gate, and a branch is not finished while it is red.
+4. **Verify the assertion, not just the line.** Coverage says a line ran, not
+   that the check was meaningful: the worst bug found here sat in a function at
+   100% coverage. When an assertion matters, confirm it fails against the wrong
+   implementation before trusting it.

@@ -23,4 +23,15 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+
+      # Pending scenarios fail, so a red suite here means either a real
+      # regression or behaviour that was specified and not yet built. Both
+      # should block a merge.
       - run: go test ./...
+
+      - name: Pending scenarios
+        if: always()
+        run: ./scripts/scenarios.sh
+
+      - name: Coverage
+        run: ./scripts/cover.sh 85
