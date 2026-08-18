@@ -6,17 +6,32 @@ import (
 	"time"
 )
 
-// maxProjectWidth caps the project column so one deeply nested vault path
-// cannot push the status and age columns off the edge of a terminal.
-const maxProjectWidth = 28
+const (
+	maxLabelWidth   = 30
+	maxProjectWidth = 22
+)
 
-// Render writes the LIVE SESSIONS block — the whole of `mindskein status`, and
+// RenderOptions carries what the renderer cannot work out from a session alone.
+type RenderOptions struct {
+	// Labels names a session by what it is, keyed by session id. The registry
+	// itself cannot supply this: a title is only known once a transcript has
+	// been read, which happens on Stop. Sessions with no entry fall back to
+	// their folder.
+	Labels map[string]string
+
+	// ShowStale includes sessions that have gone quiet long enough that their
+	// status is no longer trustworthy. Off by default, because a day of dead
+	// sessions buries the two that are live.
+	ShowStale bool
+}
+
+// Render writes the LIVE SESSIONS block: the whole of `mindskein status`, and
 // one of the three sections of the morning brief.
 //
 // It lives here rather than in internal/brief because the package that owns the
 // record owns presenting it; the brief composes this block rather than
 // reimplementing it.
-func Render(w io.Writer, sessions []*Session, now time.Time) error {
+func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions) error {
 	if _, err := fmt.Fprintln(w, "LIVE SESSIONS"); err != nil {
 		return err
 	}
@@ -26,13 +41,21 @@ func Render(w io.Writer, sessions []*Session, now time.Time) error {
 		return err
 	}
 
-	type row struct{ id, project, status, age, event string }
+	type row struct{ id, label, project, status, age, event string }
 	rows := make([]row, 0, len(sessions))
-	running := 0
+	running, stale := 0, 0
 
 	for _, s := range sessions {
+		isStale := s.Stale(now)
+		if isStale {
+			stale++
+			if !opts.ShowStale {
+				continue
+			}
+		}
+
 		status := string(s.Status)
-		if s.Stale(now) {
+		if isStale {
 			// Nothing reports a terminated session, so a killed terminal
 			// leaves its last status behind. Say so rather than imply the
 			// session is still sitting there.
@@ -40,26 +63,46 @@ func Render(w io.Writer, sessions []*Session, now time.Time) error {
 		} else if s.Status == StatusRunning {
 			running++
 		}
+
+		project := s.ProjectName()
+		label := opts.Labels[s.ID]
+		if label == "" {
+			// Without a title the folder is all there is, and repeating it in
+			// both columns would waste the width.
+			label, project = project, ""
+		}
+
 		rows = append(rows, row{
 			id:      s.ShortID(),
-			project: truncate(s.ProjectName(), maxProjectWidth),
+			label:   truncate(label, maxLabelWidth),
+			project: truncate(project, maxProjectWidth),
 			status:  status,
 			age:     age(now.Sub(s.LastEventAt)),
 			event:   s.LastEvent,
 		})
 	}
 
-	var idW, projW, statusW, ageW int
+	if len(rows) == 0 {
+		if _, err := fmt.Fprintf(w, "  none active — %s stale, run with --all to see them\n",
+			plural(stale, "session")); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	var idW, labelW, projW, statusW, ageW int
 	for _, r := range rows {
 		idW = max(idW, len(r.id))
-		projW = max(projW, len(r.project))
+		labelW = max(labelW, len([]rune(r.label)))
+		projW = max(projW, len([]rune(r.project)))
 		statusW = max(statusW, len(r.status))
 		ageW = max(ageW, len(r.age))
 	}
 
 	for _, r := range rows {
-		line := fmt.Sprintf("  %-*s  %-*s  %-*s  %*s",
-			idW, r.id, projW, r.project, statusW, r.status, ageW, r.age)
+		line := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %*s",
+			idW, r.id, labelW, pad(r.label, labelW), projW, pad(r.project, projW),
+			statusW, r.status, ageW, r.age)
 		if r.event != "" {
 			line += "  (" + r.event + ")"
 		}
@@ -68,8 +111,20 @@ func Render(w io.Writer, sessions []*Session, now time.Time) error {
 		}
 	}
 
-	_, err := fmt.Fprintf(w, "\n  %s · %d running\n", plural(len(rows), "session"), running)
+	summary := fmt.Sprintf("\n  %s · %d running", plural(len(rows), "session"), running)
+	if stale > 0 && !opts.ShowStale {
+		summary += fmt.Sprintf(" · %d stale hidden (--all)", stale)
+	}
+	_, err := fmt.Fprintln(w, summary)
 	return err
+}
+
+// pad widens by rune count, so a title containing non-ASCII still lines up.
+func pad(s string, n int) string {
+	for len([]rune(s)) < n {
+		s += " "
+	}
+	return s
 }
 
 // age renders an elapsed duration at the resolution the reader cares about:

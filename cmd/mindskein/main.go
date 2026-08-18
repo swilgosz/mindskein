@@ -41,7 +41,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	commands := []command{
 		{"brief", "print priorities, live sessions and last handoffs", cmdBrief},
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
-			return cmdStatus(args, stdout)
+			return cmdStatus(args, stdout, stderr)
 		}},
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", cmdPriorities},
 		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
@@ -96,7 +96,14 @@ func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and
 // the only way to read the registry without opening the JSON by hand.
-func cmdStatus(_ []string, stdout io.Writer) error {
+func cmdStatus(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	all := fs.Bool("all", false, "include stale sessions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	store, err := session.DefaultStore()
 	if err != nil {
 		return err
@@ -105,7 +112,36 @@ func cmdStatus(_ []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return session.Render(stdout, sessions, time.Now().UTC())
+
+	return session.Render(stdout, sessions, time.Now().UTC(), session.RenderOptions{
+		Labels:    sessionLabels(),
+		ShowStale: *all,
+	})
+}
+
+// sessionLabels names sessions by their handoff title. The registry cannot
+// supply this — a title comes from the transcript, which only Stop reads — so
+// the two stores are joined here, on session id. A session that has not yet
+// completed a turn simply has no entry.
+//
+// A failure to read handoffs is not worth reporting: the folder name is a
+// usable fallback, and status must still print.
+func sessionLabels() map[string]string {
+	store, err := handoff.DefaultStore()
+	if err != nil {
+		return nil
+	}
+	handoffs, err := store.List()
+	if err != nil {
+		return nil
+	}
+	labels := make(map[string]string, len(handoffs))
+	for _, h := range handoffs {
+		if label := h.Label(); label != "" {
+			labels[h.SessionID] = label
+		}
+	}
+	return labels
 }
 
 // cmdHook dispatches the three hook events registered globally in

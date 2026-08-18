@@ -9,7 +9,7 @@ import (
 
 func TestRenderEmpty(t *testing.T) {
 	var out bytes.Buffer
-	if err := Render(&out, nil, time.Now()); err != nil {
+	if err := Render(&out, nil, time.Now(), RenderOptions{}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	got := out.String()
@@ -37,7 +37,7 @@ func TestRenderColumnsAlign(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
@@ -74,7 +74,7 @@ func TestRenderMarksStale(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{ShowStale: true}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	got := out.String()
@@ -90,7 +90,7 @@ func TestRenderMarksStale(t *testing.T) {
 func TestRenderSingularSummary(t *testing.T) {
 	now := time.Now()
 	var out bytes.Buffer
-	if err := Render(&out, []*Session{{ID: "a", Status: StatusRunning, LastEventAt: now}}, now); err != nil {
+	if err := Render(&out, []*Session{{ID: "a", Status: StatusRunning, LastEventAt: now}}, now, RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if want := "1 session · 1 running"; !strings.Contains(out.String(), want) {
@@ -102,7 +102,7 @@ func TestRenderTruncatesLongProject(t *testing.T) {
 	now := time.Now()
 	long := "/Users/seb/" + strings.Repeat("verylongdirname", 4)
 	var out bytes.Buffer
-	if err := Render(&out, []*Session{{ID: "a", ProjectPath: long, Status: StatusRunning, LastEventAt: now}}, now); err != nil {
+	if err := Render(&out, []*Session{{ID: "a", ProjectPath: long, Status: StatusRunning, LastEventAt: now}}, now, RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
