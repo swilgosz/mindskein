@@ -99,7 +99,7 @@ func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
 func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	all := fs.Bool("all", false, "include stale sessions")
+	all := fs.Bool("all", false, "include sessions that have ended")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -114,8 +114,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return session.Render(stdout, sessions, time.Now().UTC(), session.RenderOptions{
-		Labels:    sessionLabels(),
-		ShowStale: *all,
+		Labels:  sessionLabels(),
+		ShowAll: *all,
 	})
 }
 

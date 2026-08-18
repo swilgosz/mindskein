@@ -22,10 +22,11 @@ const (
 	EventPreToolUse   Event = "pre-tool-use"
 	EventNotification Event = "notification"
 	EventStop         Event = "stop"
+	EventSessionEnd   Event = "session-end"
 )
 
 // Events is every event the CLI accepts, in registration order.
-var Events = []Event{EventPreToolUse, EventNotification, EventStop}
+var Events = []Event{EventPreToolUse, EventNotification, EventStop, EventSessionEnd}
 
 // maxPayload caps how much stdin we will read. Payloads carry tool_input,
 // which for a Write can be a whole file, and we only need a handful of scalar
@@ -49,6 +50,9 @@ type Payload struct {
 
 	// Notification
 	NotificationType string `json:"notification_type"`
+
+	// SessionEnd: clear, resume, logout, prompt_input_exit or other.
+	SessionEndReason string `json:"session_end_reason"`
 
 	// Present only when the event came from a subagent. The session id is
 	// still the parent's, so subagent activity correctly keeps the session
@@ -117,6 +121,15 @@ func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) 
 		}
 		status = session.StatusWaiting
 		lastEvent = p.NotificationType
+	case EventSessionEnd:
+		// The one ending that is reported rather than inferred. It can still be
+		// missed — a SIGKILLed process never gets to run a hook — which is why
+		// silence is still tracked separately.
+		status = session.StatusEnded
+		lastEvent = p.SessionEndReason
+		if lastEvent == "" {
+			lastEvent = "other"
+		}
 	case EventStop:
 		// Stop fires on every turn completion, not at session end — so this
 		// means "idle between turns". The idle_prompt notification that
@@ -128,6 +141,15 @@ func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) 
 	}
 
 	return store.Upsert(p.SessionID, now, func(s *session.Session) {
+		// A session that has ended stays ended. Hooks run in parallel, so a
+		// slower Stop can land after the end event and would otherwise
+		// resurrect a finished session.
+		if s.Status == session.StatusEnded && ev != EventSessionEnd {
+			return
+		}
+		if ev == EventSessionEnd {
+			s.EndReason = p.SessionEndReason
+		}
 		s.Status = status
 		s.LastEvent = lastEvent
 		s.PID = pid

@@ -70,11 +70,11 @@ func TestRenderMarksStale(t *testing.T) {
 	sessions := []*Session{{
 		ID: "dead0001", ProjectPath: "/Users/seb/Projects/old",
 		Status: StatusWaiting, LastEvent: "idle_prompt",
-		LastEventAt: now.Add(-StaleAfter - time.Minute),
+		LastEventAt: now.Add(-StaleAfter - time.Hour),
 	}}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now, RenderOptions{ShowStale: true}); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{ShowAll: true}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	got := out.String()

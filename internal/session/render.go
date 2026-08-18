@@ -19,10 +19,13 @@ type RenderOptions struct {
 	// their folder.
 	Labels map[string]string
 
-	// ShowStale includes sessions that have gone quiet long enough that their
-	// status is no longer trustworthy. Off by default, because a day of dead
-	// sessions buries the two that are live.
-	ShowStale bool
+	// ShowAll includes sessions that have ended. Off by default, so finished
+	// work does not bury live work.
+	//
+	// Only ended sessions are hidden, never merely quiet ones: a tab left open
+	// overnight is paused, not finished, and hiding it would empty the view at
+	// exactly the moment it is most wanted.
+	ShowAll bool
 }
 
 // Render writes the LIVE SESSIONS block: the whole of `mindskein status`, and
@@ -43,24 +46,26 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 
 	type row struct{ id, label, project, status, age, event string }
 	rows := make([]row, 0, len(sessions))
-	running, stale := 0, 0
+	running, ended := 0, 0
 
 	for _, s := range sessions {
-		isStale := s.Stale(now)
-		if isStale {
-			stale++
-			if !opts.ShowStale {
+		if s.Ended() {
+			ended++
+			if !opts.ShowAll {
 				continue
 			}
 		}
 
 		status := string(s.Status)
-		if isStale {
-			// Nothing reports a terminated session, so a killed terminal
-			// leaves its last status behind. Say so rather than imply the
-			// session is still sitting there.
+		if s.Ended() && s.EndReason != "" {
+			status += " (" + s.EndReason + ")"
+		} else if s.Stale(now) {
+			// A hard-killed process never reports its ending, so this status
+			// may simply be lying. Say so rather than imply the session is
+			// still sitting there.
 			status += " (stale)"
-		} else if s.Status == StatusRunning {
+		}
+		if s.Status == StatusRunning {
 			running++
 		}
 
@@ -83,8 +88,8 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 	}
 
 	if len(rows) == 0 {
-		if _, err := fmt.Fprintf(w, "  none active — %s stale, run with --all to see them\n",
-			plural(stale, "session")); err != nil {
+		if _, err := fmt.Fprintf(w, "  none open — %s ended, run with --all to see them\n",
+			plural(ended, "session")); err != nil {
 			return err
 		}
 		return nil
@@ -112,8 +117,8 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 	}
 
 	summary := fmt.Sprintf("\n  %s · %d running", plural(len(rows), "session"), running)
-	if stale > 0 && !opts.ShowStale {
-		summary += fmt.Sprintf(" · %d stale hidden (--all)", stale)
+	if ended > 0 && !opts.ShowAll {
+		summary += fmt.Sprintf(" · %d ended hidden (--all)", ended)
 	}
 	_, err := fmt.Fprintln(w, summary)
 	return err

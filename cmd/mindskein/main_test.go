@@ -234,3 +234,54 @@ func TestStopHookSurvivesAMissingTranscript(t *testing.T) {
 		t.Errorf("no handoff written despite a usable session record: %v", err)
 	}
 }
+
+// TestSessionEndHookMarksEnded covers the one ending that is reported rather
+// than inferred, and the reason that comes with it.
+func TestSessionEndHookMarksEnded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"ffff6666","cwd":"/tmp/x","hook_event_name":"SessionEnd",` +
+		`"session_end_reason":"logout"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(hook session-end) = %v, want nil", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "sessions", "ffff6666.json"))
+	if err != nil {
+		t.Fatalf("reading session file: %v", err)
+	}
+	var got session.Session
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != session.StatusEnded {
+		t.Errorf("status = %q, want %q", got.Status, session.StatusEnded)
+	}
+	if got.EndReason != "logout" {
+		t.Errorf("end_reason = %q, want %q", got.EndReason, "logout")
+	}
+}
+
+// TestEndedSessionSurvivesALateStop: hooks run in parallel, so a slower Stop
+// can land after the end event and must not resurrect a finished session.
+func TestEndedSessionSurvivesALateStop(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	end := `{"session_id":"ffff6666","cwd":"/tmp/x","session_end_reason":"logout"}`
+	stop := `{"session_id":"ffff6666","cwd":"/tmp/x"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(end), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"hook", "stop"}, strings.NewReader(stop), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, "sessions", "ffff6666.json"))
+	var got session.Session
+	json.Unmarshal(data, &got)
+	if got.Status != session.StatusEnded {
+		t.Errorf("status = %q, want it to stay %q", got.Status, session.StatusEnded)
+	}
+}
