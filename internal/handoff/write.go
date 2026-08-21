@@ -58,16 +58,22 @@ func (h *Handoff) Name() string {
 	return Location{CWD: h.CWD, Root: h.RepoRoot}.Name()
 }
 
-// Label prefers what a human chose over what was generated.
-func (h *Handoff) Label() string {
-	switch {
-	case h.Project != "":
+// Named is what this work was called, empty when nothing named it. A caller
+// that must be able to tell a real title from a folder asks for this.
+func (h *Handoff) Named() string {
+	if h.Project != "" {
 		return h.Project
-	case h.Title != "":
-		return h.Title
-	default:
-		return h.Name()
 	}
+	return h.Title
+}
+
+// Label prefers what a human chose over what was generated, falling back to
+// the folder so the handoff document always has a heading.
+func (h *Handoff) Label() string {
+	if named := h.Named(); named != "" {
+		return named
+	}
+	return h.Name()
 }
 
 type Store struct {

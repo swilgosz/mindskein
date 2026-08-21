@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/swilgosz/mindskein/internal/session"
 )
@@ -233,4 +234,249 @@ func TestStopHookSurvivesAMissingTranscript(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "handoffs", "dddd4444.md")); err != nil {
 		t.Errorf("no handoff written despite a usable session record: %v", err)
 	}
+}
+
+// TestSessionEndHookMarksEnded covers the one ending that is reported rather
+// than inferred, and the reason that comes with it.
+func TestSessionEndHookMarksEnded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"ffff6666","cwd":"/tmp/x","hook_event_name":"SessionEnd",` +
+		`"reason":"logout"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(hook session-end) = %v, want nil", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "sessions", "ffff6666.json"))
+	if err != nil {
+		t.Fatalf("reading session file: %v", err)
+	}
+	var got session.Session
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != session.StatusEnded {
+		t.Errorf("status = %q, want %q", got.Status, session.StatusEnded)
+	}
+	if got.EndReason != "logout" {
+		t.Errorf("end_reason = %q, want %q", got.EndReason, "logout")
+	}
+}
+
+// TestSessionEndWithoutAReason pins the shape every real SessionEnd payload
+// had while the field was misspelled: no reason at all. The record must not
+// then disagree with itself.
+func TestSessionEndWithoutAReason(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/x","hook_event_name":"SessionEnd"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "sessions", "aaaa1111.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got session.Session
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EndReason != "other" || got.LastEvent != "other" {
+		t.Errorf("end_reason = %q, last_event = %q — want both %q", got.EndReason, got.LastEvent, "other")
+	}
+}
+
+// TestStatusShowsWhyASessionEnded is the end-to-end the misspelling defeated:
+// a real payload must reach the rendered row.
+func TestStatusShowsWhyASessionEnded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/x","reason":"prompt_input_exit"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := status(t, "--all")
+	if !strings.Contains(out, "prompt_input_exit") {
+		t.Errorf("status --all must say why the session ended:\n%s", out)
+	}
+}
+
+// TestStatusHelpIsNotAFailure: -h is advertised in the top-level usage.
+func TestStatusHelpIsNotAFailure(t *testing.T) {
+	t.Setenv("MINDSKEIN_HOME", t.TempDir())
+	if err := run([]string{"status", "-h"}, nil, io.Discard, io.Discard); err != nil {
+		t.Errorf("run(status -h) = %v, want nil", err)
+	}
+}
+
+// TestStatusDoesNotPrintTheFolderTwice covers the join between the two stores:
+// a handoff with no title must not fill the label column with the folder the
+// next column already shows.
+func TestStatusDoesNotPrintTheFolderTwice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	// No transcript, so the handoff gets no title — the path
+	// TestStopHookSurvivesAMissingTranscript already exercises.
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/somerepo","transcript_path":"/nope/missing.jsonl"}`
+	if err := run([]string{"hook", "stop"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := status(t)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "aaaa1111") {
+			continue
+		}
+		if strings.Count(line, "somerepo") > 1 {
+			t.Errorf("folder printed in both columns:\n%s", line)
+		}
+	}
+}
+
+// TestEndedSessionSurvivesALateStop: hooks run in parallel, so a slower Stop
+// can land after the end event and must not resurrect a finished session.
+func TestEndedSessionSurvivesALateStop(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	end := `{"session_id":"ffff6666","cwd":"/tmp/x","reason":"logout"}`
+	stop := `{"session_id":"ffff6666","cwd":"/tmp/x"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(end), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"hook", "stop"}, strings.NewReader(stop), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, "sessions", "ffff6666.json"))
+	var got session.Session
+	json.Unmarshal(data, &got)
+	if got.Status != session.StatusEnded {
+		t.Errorf("status = %q, want it to stay %q", got.Status, session.StatusEnded)
+	}
+}
+
+// writeSession puts a record straight into the registry with a chosen age.
+// Going through the hooks would stamp LastEventAt as now, which is exactly the
+// field the retention horizon reads.
+func writeSession(t *testing.T, home, id string, silent time.Duration) {
+	t.Helper()
+	dir := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sess := session.Session{
+		ID: id, Agent: session.AgentClaudeCode, ProjectPath: "/Users/seb/Projects/mindskein",
+		Status: session.StatusWaiting, LastEvent: "idle_prompt",
+		StartedAt: time.Now().UTC().Add(-silent), LastEventAt: time.Now().UTC().Add(-silent),
+	}
+	data, err := json.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeConfig(t *testing.T, home, body string) {
+	t.Helper()
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func status(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if err := run(append([]string{"status"}, args...), nil, &stdout, &stderr); err != nil {
+		t.Fatalf("run(status) = %v, want nil", err)
+	}
+	return stdout.String(), stderr.String()
+}
+
+// TestStatusRetentionHorizon covers the CLI half: where the horizon comes from
+// and what overrides it. The hiding rule itself is covered in internal/session.
+func TestStatusRetentionHorizon(t *testing.T) {
+	t.Run("hides a session past the default horizon", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeSession(t, home, "aaaa1111", 8*24*time.Hour)
+		writeSession(t, home, "bbbb2222", time.Hour)
+
+		out, _ := status(t)
+		if strings.Contains(out, "aaaa1111") {
+			t.Errorf("want the week-old session hidden by default:\n%s", out)
+		}
+		if !strings.Contains(out, "bbbb2222") {
+			t.Errorf("want the fresh session shown:\n%s", out)
+		}
+	})
+
+	t.Run("reads the horizon from config.toml", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status]\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", 3*24*time.Hour)
+
+		out, _ := status(t)
+		if strings.Contains(out, "aaaa1111") {
+			t.Errorf("a configured 2d horizon should hide a 3-day-old session:\n%s", out)
+		}
+		if !strings.Contains(out, "older than 2d") {
+			t.Errorf("want the configured horizon named in the summary:\n%s", out)
+		}
+	})
+
+	t.Run("lets the flag override the configured horizon", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status]\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", 3*24*time.Hour)
+
+		out, _ := status(t, "--hide-after=30d")
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("--hide-after must win over the config file:\n%s", out)
+		}
+	})
+
+	t.Run("keeps every session when the horizon is zero", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeSession(t, home, "aaaa1111", 100*24*time.Hour)
+
+		out, _ := status(t, "--hide-after=0")
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("a zero horizon must hide nothing:\n%s", out)
+		}
+	})
+
+	t.Run("warns about a malformed config but still prints", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", time.Hour)
+
+		out, errOut := status(t)
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("a broken config must not cost the listing:\n%s", out)
+		}
+		if !strings.Contains(errOut, "config.toml") {
+			t.Errorf("want the broken config named on stderr, got %q", errOut)
+		}
+	})
+
+	t.Run("rejects an unparseable horizon on the command line", func(t *testing.T) {
+		t.Setenv("MINDSKEIN_HOME", t.TempDir())
+		if err := run([]string{"status", "--hide-after=soon"}, nil, io.Discard, io.Discard); err == nil {
+			t.Error("want a flag parse error rather than a silent fallback")
+		}
+	})
 }

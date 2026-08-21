@@ -9,7 +9,7 @@ import (
 
 func TestRenderEmpty(t *testing.T) {
 	var out bytes.Buffer
-	if err := Render(&out, nil, time.Now()); err != nil {
+	if err := Render(&out, nil, time.Now(), RenderOptions{}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	got := out.String()
@@ -37,7 +37,7 @@ func TestRenderColumnsAlign(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
@@ -69,19 +69,20 @@ func TestRenderMarksStale(t *testing.T) {
 	now := time.Date(2026, 8, 17, 23, 10, 0, 0, time.UTC)
 	sessions := []*Session{{
 		ID: "dead0001", ProjectPath: "/Users/seb/Projects/old",
-		Status: StatusWaiting, LastEvent: "idle_prompt",
-		LastEventAt: now.Add(-StaleAfter - time.Minute),
+		Status: StatusRunning, LastEvent: "Bash",
+		LastEventAt: now.Add(-StaleAfter - time.Hour),
 	}}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{ShowAll: true}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	got := out.String()
 	if !strings.Contains(got, "stale") {
 		t.Errorf("a session past StaleAfter should be marked stale:\n%s", got)
 	}
-	// Stale sessions must not be counted as running.
+	// A stale status may be lying, so it must not be counted as running — with
+	// StatusWaiting here this assertion passed whatever the counter did.
 	if !strings.Contains(got, "0 running") {
 		t.Errorf("stale session counted as running:\n%s", got)
 	}
@@ -90,7 +91,7 @@ func TestRenderMarksStale(t *testing.T) {
 func TestRenderSingularSummary(t *testing.T) {
 	now := time.Now()
 	var out bytes.Buffer
-	if err := Render(&out, []*Session{{ID: "a", Status: StatusRunning, LastEventAt: now}}, now); err != nil {
+	if err := Render(&out, []*Session{{ID: "a", Status: StatusRunning, LastEventAt: now}}, now, RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if want := "1 session · 1 running"; !strings.Contains(out.String(), want) {
@@ -102,7 +103,7 @@ func TestRenderTruncatesLongProject(t *testing.T) {
 	now := time.Now()
 	long := "/Users/seb/" + strings.Repeat("verylongdirname", 4)
 	var out bytes.Buffer
-	if err := Render(&out, []*Session{{ID: "a", ProjectPath: long, Status: StatusRunning, LastEventAt: now}}, now); err != nil {
+	if err := Render(&out, []*Session{{ID: "a", ProjectPath: long, Status: StatusRunning, LastEventAt: now}}, now, RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
