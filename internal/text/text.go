@@ -38,3 +38,26 @@ func Summarize(s string, n int) string {
 	}
 	return strings.TrimRight(string(cut), " ,;:·") + "…"
 }
+
+// OneLine flattens s into a single printable line: control characters dropped,
+// every run of whitespace collapsed to one space.
+//
+// Everything the brief prints in a column was typed or pasted into a session,
+// or is a title generated from the first thing typed. Two characters in that
+// text break the page rather than the cell: an ESC moves the terminal cursor
+// and a newline splits one row into two, taking the column widths with it.
+//
+// Whitespace controls become a space rather than vanishing. Dropping a tab
+// would run the words either side of it together, which is what a prompt
+// pasted from a spreadsheet or an indented block is full of.
+func OneLine(s string) string {
+	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsSpace(r):
+			return ' '
+		case unicode.IsControl(r):
+			return -1
+		}
+		return r
+	}, s)), " ")
+}

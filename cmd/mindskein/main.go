@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/swilgosz/mindskein/internal/brief"
 	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
@@ -41,7 +42,9 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	commands := []command{
-		{"brief", "print priorities, live sessions and last handoffs", cmdBrief},
+		{"brief", "print priorities, live sessions and last handoffs", func(args []string, _ io.Reader) error {
+			return cmdBrief(args, stdout, stderr)
+		}},
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
 			return cmdStatus(args, stdout, stderr)
 		}},
@@ -91,11 +94,50 @@ func usage(w io.Writer, commands []command) {
 	fmt.Fprintln(w, "Run 'mindskein <command> -h' for details on a command.")
 }
 
-// errNotImplemented keeps a command dispatchable before it does anything, so
-// the usage text and the command set stay honest.
-var errNotImplemented = errors.New("not implemented yet")
+// cmdBrief prints the whole morning question in one page: what matters, what
+// is running, and where each thread was left.
+//
+// The three sections come from three independent sources, so each is composed
+// as a section rather than rendered inline: an unreadable plan or an
+// unreachable store costs one line of explanation, not the other two blocks.
+func cmdBrief(args []string, stdout, stderr io.Writer) error {
+	cfg, cfgErr := loadConfig()
+	hideAfter := cfg.Status.HideAfter
 
-func cmdBrief([]string, io.Reader) error { return errNotImplemented }
+	fs := flag.NewFlagSet("brief", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	all := fs.Bool("all", false, "widen every section: the backlog, ended sessions, every workstream")
+	fs.Var(&hideAfter, "hide-after", "hide sessions quiet for longer than this (0 keeps every one)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if cfgErr != nil {
+		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
+	}
+
+	// Read once and use twice: the same handoffs name the sessions and fill
+	// the last section. A failure here is not fatal to either — the sessions
+	// block falls back to folder names, and the last section explains itself.
+	handoffs, handoffErr := loadHandoffs()
+
+	return brief.Render(stdout,
+		brief.Section{Heading: priorities.Heading, Render: func(w io.Writer) error {
+			return renderPriorities(w, cfg, *all)
+		}},
+		brief.Section{Heading: session.Heading, Render: func(w io.Writer) error {
+			return renderSessions(w, labelsFrom(handoffs), *all, hideAfter.Duration())
+		}},
+		brief.Section{Heading: handoff.Heading, Render: func(w io.Writer) error {
+			if handoffErr != nil {
+				return handoffErr
+			}
+			return handoff.Render(w, handoffs, handoff.RenderOptions{ShowAll: *all})
+		}},
+	)
+}
 
 // cmdPriorities prints the PRIORITIES block: what the vault's plan.md calls the
 // current focus, and what is queued behind it.
@@ -119,24 +161,30 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "mindskein: %v\n", cfgErr)
 	}
 
+	return renderPriorities(stdout, cfg, *all)
+}
+
+// renderPriorities is the PRIORITIES block, shared by the brief and by the
+// command that prints it alone.
+func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
 	path := cfg.Vault.PlanPath()
 	if path == "" {
-		return priorities.Hint(stdout,
+		return priorities.Hint(w,
 			"no plan configured — set vault.path and vault.plan in "+configFile())
 	}
 	plan, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return priorities.Hint(stdout, "no plan at "+path)
+		return priorities.Hint(w, "no plan at "+path)
 	}
 	if err != nil {
 		return err
 	}
 
 	levels := priorities.Shown
-	if *all {
+	if all {
 		levels = priorities.All
 	}
-	return priorities.Render(stdout, plan, priorities.RenderOptions{Levels: levels})
+	return priorities.Render(w, plan, priorities.RenderOptions{Levels: levels})
 }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and
@@ -163,6 +211,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
 	}
 
+	return renderSessions(stdout, sessionLabels(), *all, hideAfter.Duration())
+}
+
+// renderSessions is the LIVE SESSIONS block, shared by the brief and by the
+// command that prints it alone.
+func renderSessions(w io.Writer, labels map[string]string, all bool, hideAfter time.Duration) error {
 	store, err := session.DefaultStore()
 	if err != nil {
 		return err
@@ -171,11 +225,10 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-
-	return session.Render(stdout, sessions, time.Now().UTC(), session.RenderOptions{
-		Labels:    sessionLabels(),
-		ShowAll:   *all,
-		HideAfter: hideAfter.Duration(),
+	return session.Render(w, sessions, time.Now().UTC(), session.RenderOptions{
+		Labels:    labels,
+		ShowAll:   all,
+		HideAfter: hideAfter,
 	})
 }
 
@@ -204,14 +257,22 @@ func configFile() string {
 // A failure to read handoffs is not worth reporting: the folder name is a
 // usable fallback, and status must still print.
 func sessionLabels() map[string]string {
+	handoffs, err := loadHandoffs()
+	if err != nil {
+		return nil
+	}
+	return labelsFrom(handoffs)
+}
+
+func loadHandoffs() ([]*handoff.Handoff, error) {
 	store, err := handoff.DefaultStore()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	handoffs, err := store.List()
-	if err != nil {
-		return nil
-	}
+	return store.List()
+}
+
+func labelsFrom(handoffs []*handoff.Handoff) map[string]string {
 	labels := make(map[string]string, len(handoffs))
 	for _, h := range handoffs {
 		// Named, not Label: Label falls back to the folder, which would fill

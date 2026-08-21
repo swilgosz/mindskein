@@ -79,6 +79,47 @@ func TestToolResultsAreNotUserMessages(t *testing.T) {
 	}
 }
 
+// TestInjectedNotificationsAreNotPrompts covers the records the runtime writes
+// as the user: every promptSource "system" record across the transcripts on
+// this machine is a task-notification, so accepting them makes a handoff
+// report "<task-notification>" as the last thing that was asked.
+func TestInjectedNotificationsAreNotPrompts(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "what the human asked"),
+		userLine("2026-08-18T08:00:10Z", "system",
+			"<task-notification><task-id>abc</task-id></task-notification>"),
+	)
+	if tr.LastMessage != "what the human asked" {
+		t.Errorf("LastMessage = %q, an injected notification must not win", tr.LastMessage)
+	}
+}
+
+// TestPromptsFromAnotherClientCount guards the other half: an sdk prompt is a
+// person asking through a different client, not machine chatter.
+func TestPromptsFromAnotherClientCount(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "the first question"),
+		userLine("2026-08-18T08:00:10Z", "sdk", "the question from elsewhere"),
+	)
+	if tr.LastMessage != "the question from elsewhere" {
+		t.Errorf("LastMessage = %q, want the sdk prompt", tr.LastMessage)
+	}
+}
+
+// TestUnknownPromptSourceCounts is the reason the rule names what to reject.
+// A source nobody has seen yet is far more likely to be a person asking
+// through a newer client than a new kind of injection, and quietly keeping the
+// previous prompt would leave the brief reporting the wrong place to pick up.
+func TestUnknownPromptSourceCounts(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "the old question"),
+		userLine("2026-08-18T08:00:10Z", "slash-command", "the newer question"),
+	)
+	if tr.LastMessage != "the newer question" {
+		t.Errorf("LastMessage = %q, an unrecognised source must not be dropped", tr.LastMessage)
+	}
+}
+
 func TestSidechainRecordsAreIgnored(t *testing.T) {
 	tr := parse(t,
 		userLine("2026-08-18T08:00:00Z", "typed", "what the human asked"),
