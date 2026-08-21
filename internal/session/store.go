@@ -76,6 +76,12 @@ func safeID(id string) (string, error) {
 	return id, nil
 }
 
+// lockPath is the file whose advisory lock serialises writers of one session.
+// List skips it: the extension is not .json.
+func (s *Store) lockPath(id string) string {
+	return filepath.Join(s.Dir, id+".lock")
+}
+
 // Path is the file backing a session id.
 func (s *Store) Path(id string) (string, error) {
 	safe, err := safeID(id)
@@ -168,9 +174,22 @@ func writeTemp(f *os.File, data []byte) error {
 // one is replaced rather than propagated — the registry is a live cache, and a
 // hook that failed hard would degrade the very session it is observing.
 func (s *Store) Upsert(id string, now time.Time, apply func(*Session)) (*Session, error) {
-	if _, err := safeID(id); err != nil {
+	safe, err := safeID(id)
+	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(s.Dir, dirPerm); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", s.Dir, err)
+	}
+	// Load, mutate and save must be one step. Hooks run in parallel, and
+	// without this a Stop that read the record before a SessionEnd wrote it
+	// would apply its mutation to a stale copy and rename "done" over a
+	// session that had already finished.
+	release, err := s.lock(safe)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	sess, err := s.Load(id)
 	if err != nil || sess == nil {
