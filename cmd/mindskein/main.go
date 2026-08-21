@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/brief"
@@ -24,6 +25,33 @@ import (
 // version is overridden at build time with
 // -ldflags "-X main.version=$(git describe --tags --always)".
 var version = "dev"
+
+// buildVersion is what the binary reports.
+//
+// Only the release pipeline passes the ldflag, and the first install line in
+// the README is `go install …@latest`, which does not. Go records the module
+// version for those, so read it back rather than telling most of the people
+// who install this that they are running "dev".
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	return resolveVersion(version, info.Main.Version)
+}
+
+// resolveVersion prefers what was stamped in, then what the module system
+// recorded. "(devel)" is what a plain `go build` leaves behind and says no
+// more than "dev" does.
+func resolveVersion(stamped, module string) string {
+	if stamped != "dev" {
+		return stamped
+	}
+	if module == "" || module == "(devel)" {
+		return stamped
+	}
+	return module
+}
 
 // command is one top-level subcommand of the CLI. Every handler takes stdin
 // because the hook subcommand reads its payload from it.
@@ -53,7 +81,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}},
 		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
 		{"version", "print the mindskein version", func([]string, io.Reader) error {
-			fmt.Fprintln(stdout, version)
+			fmt.Fprintln(stdout, buildVersion())
 			return nil
 		}},
 	}
@@ -82,7 +110,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 func usage(w io.Writer, commands []command) {
-	fmt.Fprintf(w, "mindskein %s — one command for the morning question.\n\n", version)
+	fmt.Fprintf(w, "mindskein %s — one command for the morning question.\n\n", buildVersion())
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  mindskein <command> [arguments]")
 	fmt.Fprintln(w)

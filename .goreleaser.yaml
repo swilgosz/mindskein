@@ -1,0 +1,66 @@
+# Release pipeline. Runs from .github/workflows/release.yml on a v* tag.
+#
+# Local dry run, no tag and no upload:
+#   goreleaser release --snapshot --clean
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mindskein
+    main: ./cmd/mindskein
+    binary: mindskein
+    env:
+      - CGO_ENABLED=0
+    # Windows builds because the session store already has a lock fallback for
+    # platforms without flock; it is compiled, not tested on hardware.
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    # -X sets the string `mindskein version` prints. .Tag rather than .Version
+    # because .Version drops the leading v, and a reporter reads the version off
+    # the release page, the git tag or the install line — all of which carry it.
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: mindskein
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/plan-format.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - Merge pull request
+
+release:
+  # A tag carrying a hyphen (v0.1.0-rc.1) is published as a pre-release, so an
+  # unfinished version cannot become the download the README points at.
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    go install github.com/swilgosz/mindskein/cmd/mindskein@{{ .Tag }}
+    ```
+
+    Or download the archive for your platform below and verify it against
+    `checksums.txt`. Setup — the config file and the four hooks — is in the
+    README; nothing is recorded until the hooks are registered.

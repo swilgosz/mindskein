@@ -21,6 +21,11 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
 
+      # gofmt exits 0 whatever it finds and just names the files, so the check
+      # has to be the emptiness of its output.
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
       # Pending scenarios fail, so a red suite here means either a real
       # regression or behaviour that was specified and not yet built. Both
       # should block a merge.
@@ -32,3 +37,12 @@ jobs:
 
       - name: Coverage
         run: ./scripts/cover.sh 85
+
+      # Builds the release without publishing it. `check` validates the schema
+      # and stops there — it does not confirm that the binary cross-compiles
+      # for every target, or that the files the archives pull in still exist,
+      # so renaming one of those would leave CI green and break the tag push.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean

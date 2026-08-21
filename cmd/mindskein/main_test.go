@@ -34,8 +34,27 @@ func TestRunVersion(t *testing.T) {
 	if err := run([]string{"version"}, nil, &stdout, io.Discard); err != nil {
 		t.Fatalf("run(version) = %v, want nil", err)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != version {
-		t.Errorf("stdout = %q, want %q", got, version)
+	if got := strings.TrimSpace(stdout.String()); got != buildVersion() {
+		t.Errorf("stdout = %q, want %q", got, buildVersion())
+	}
+}
+
+// TestResolveVersion covers the install path the README puts first: `go
+// install` passes no ldflag, so without this the version a bug report quotes
+// would be "dev" for most users.
+func TestResolveVersion(t *testing.T) {
+	for _, c := range []struct{ name, stamped, module, want string }{
+		{"a stamped release wins", "v0.1.0", "v0.9.9", "v0.1.0"},
+		{"go install reports the module version", "dev", "v0.1.0", "v0.1.0"},
+		{"a pseudo-version is still an answer", "dev", "v0.0.0-20260821235959-a805fcbdead1", "v0.0.0-20260821235959-a805fcbdead1"},
+		{"a local build says no more than dev", "dev", "(devel)", "dev"},
+		{"no build info at all", "dev", "", "dev"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveVersion(c.stamped, c.module); got != c.want {
+				t.Errorf("resolveVersion(%q, %q) = %q, want %q", c.stamped, c.module, got, c.want)
+			}
+		})
 	}
 }
 
