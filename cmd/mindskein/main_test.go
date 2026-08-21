@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/swilgosz/mindskein/internal/session"
 )
@@ -284,4 +285,125 @@ func TestEndedSessionSurvivesALateStop(t *testing.T) {
 	if got.Status != session.StatusEnded {
 		t.Errorf("status = %q, want it to stay %q", got.Status, session.StatusEnded)
 	}
+}
+
+// writeSession puts a record straight into the registry with a chosen age.
+// Going through the hooks would stamp LastEventAt as now, which is exactly the
+// field the retention horizon reads.
+func writeSession(t *testing.T, home, id string, silent time.Duration) {
+	t.Helper()
+	dir := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sess := session.Session{
+		ID: id, Agent: session.AgentClaudeCode, ProjectPath: "/Users/seb/Projects/mindskein",
+		Status: session.StatusWaiting, LastEvent: "idle_prompt",
+		StartedAt: time.Now().UTC().Add(-silent), LastEventAt: time.Now().UTC().Add(-silent),
+	}
+	data, err := json.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeConfig(t *testing.T, home, body string) {
+	t.Helper()
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func status(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if err := run(append([]string{"status"}, args...), nil, &stdout, &stderr); err != nil {
+		t.Fatalf("run(status) = %v, want nil", err)
+	}
+	return stdout.String(), stderr.String()
+}
+
+// TestStatusRetentionHorizon covers the CLI half: where the horizon comes from
+// and what overrides it. The hiding rule itself is covered in internal/session.
+func TestStatusRetentionHorizon(t *testing.T) {
+	t.Run("hides a session past the default horizon", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeSession(t, home, "aaaa1111", 8*24*time.Hour)
+		writeSession(t, home, "bbbb2222", time.Hour)
+
+		out, _ := status(t)
+		if strings.Contains(out, "aaaa1111") {
+			t.Errorf("want the week-old session hidden by default:\n%s", out)
+		}
+		if !strings.Contains(out, "bbbb2222") {
+			t.Errorf("want the fresh session shown:\n%s", out)
+		}
+	})
+
+	t.Run("reads the horizon from config.toml", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status]\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", 3*24*time.Hour)
+
+		out, _ := status(t)
+		if strings.Contains(out, "aaaa1111") {
+			t.Errorf("a configured 2d horizon should hide a 3-day-old session:\n%s", out)
+		}
+		if !strings.Contains(out, "older than 2d") {
+			t.Errorf("want the configured horizon named in the summary:\n%s", out)
+		}
+	})
+
+	t.Run("lets the flag override the configured horizon", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status]\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", 3*24*time.Hour)
+
+		out, _ := status(t, "--hide-after=30d")
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("--hide-after must win over the config file:\n%s", out)
+		}
+	})
+
+	t.Run("keeps every session when the horizon is zero", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeSession(t, home, "aaaa1111", 100*24*time.Hour)
+
+		out, _ := status(t, "--hide-after=0")
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("a zero horizon must hide nothing:\n%s", out)
+		}
+	})
+
+	t.Run("warns about a malformed config but still prints", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeConfig(t, home, "[status\nhide_after = \"2d\"\n")
+		writeSession(t, home, "aaaa1111", time.Hour)
+
+		out, errOut := status(t)
+		if !strings.Contains(out, "aaaa1111") {
+			t.Errorf("a broken config must not cost the listing:\n%s", out)
+		}
+		if !strings.Contains(errOut, "config.toml") {
+			t.Errorf("want the broken config named on stderr, got %q", errOut)
+		}
+	})
+
+	t.Run("rejects an unparseable horizon on the command line", func(t *testing.T) {
+		t.Setenv("MINDSKEIN_HOME", t.TempDir())
+		if err := run([]string{"status", "--hide-after=soon"}, nil, io.Discard, io.Discard); err == nil {
+			t.Error("want a flag parse error rather than a silent fallback")
+		}
+	})
 }

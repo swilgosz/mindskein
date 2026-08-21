@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
 	"github.com/swilgosz/mindskein/internal/session"
@@ -97,11 +98,21 @@ func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
 // cmdStatus prints the live sessions block on its own: the mid-day check, and
 // the only way to read the registry without opening the JSON by hand.
 func cmdStatus(args []string, stdout, stderr io.Writer) error {
+	cfg, cfgErr := loadConfig()
+	hideAfter := cfg.Status.HideAfter
+
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	all := fs.Bool("all", false, "include sessions that have ended")
+	all := fs.Bool("all", false, "include sessions that have ended or aged out")
+	fs.Var(&hideAfter, "hide-after", "hide sessions quiet for longer than this (0 keeps every one)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if cfgErr != nil {
+		// Worth a line on stderr rather than a silent fallback: a setting that
+		// appears to do nothing is harder to debug than one that complains.
+		// Never fatal, though — a typo in the config must not cost the listing.
+		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
 	}
 
 	store, err := session.DefaultStore()
@@ -114,9 +125,20 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	}
 
 	return session.Render(stdout, sessions, time.Now().UTC(), session.RenderOptions{
-		Labels:  sessionLabels(),
-		ShowAll: *all,
+		Labels:    sessionLabels(),
+		ShowAll:   *all,
+		HideAfter: hideAfter.Duration(),
 	})
+}
+
+// loadConfig reads ~/.mindskein/config.toml, which sits beside the session
+// registry. It always returns a usable configuration; the error is advisory.
+func loadConfig() (config.Config, error) {
+	home, err := session.Home()
+	if err != nil {
+		return config.Defaults(), err
+	}
+	return config.Load(filepath.Join(home, "config.toml"))
 }
 
 // sessionLabels names sessions by their handoff title. The registry cannot

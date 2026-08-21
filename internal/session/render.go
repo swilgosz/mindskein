@@ -3,7 +3,10 @@ package session
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
+
+	"github.com/swilgosz/mindskein/internal/config"
 )
 
 const (
@@ -19,13 +22,23 @@ type RenderOptions struct {
 	// their folder.
 	Labels map[string]string
 
-	// ShowAll includes sessions that have ended. Off by default, so finished
-	// work does not bury live work.
+	// ShowAll includes sessions that have ended or aged out. Off by default, so
+	// finished work does not bury live work.
 	//
-	// Only ended sessions are hidden, never merely quiet ones: a tab left open
-	// overnight is paused, not finished, and hiding it would empty the view at
-	// exactly the moment it is most wanted.
+	// Being quiet is not on its own a reason to hide: a tab left open overnight
+	// is paused, not finished, and hiding it would empty the view at exactly
+	// the moment it is most wanted. Only HideAfter, set far past any real
+	// pause, applies to silence.
 	ShowAll bool
+
+	// HideAfter drops sessions quiet for longer than this, whatever status
+	// they claim: at that distance a record still saying "running" is a
+	// process that died without reporting it. Zero hides nothing by age.
+	//
+	// The horizon has to clear the longest real pause rather than the typical
+	// one, which is why it is measured in days and configured rather than
+	// guessed here.
+	HideAfter time.Duration
 }
 
 // Render writes the LIVE SESSIONS block: the whole of `mindskein status`, and
@@ -46,14 +59,22 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 
 	type row struct{ id, label, project, status, age, event string }
 	rows := make([]row, 0, len(sessions))
-	running, ended := 0, 0
+	running, ended, old := 0, 0, 0
 
 	for _, s := range sessions {
-		if s.Ended() {
+		// A session past the horizon that also ended counts as ended: that is
+		// the reported fact, and counting it twice would overstate the total.
+		hidden := true
+		switch {
+		case s.Ended():
 			ended++
-			if !opts.ShowAll {
-				continue
-			}
+		case s.Older(now, opts.HideAfter):
+			old++
+		default:
+			hidden = false
+		}
+		if hidden && !opts.ShowAll {
+			continue
 		}
 
 		status := string(s.Status)
@@ -87,9 +108,11 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 		})
 	}
 
+	hidden := hiddenSummary(ended, old, opts.HideAfter)
+
 	if len(rows) == 0 {
-		if _, err := fmt.Fprintf(w, "  none open — %s ended, run with --all to see them\n",
-			plural(ended, "session")); err != nil {
+		if _, err := fmt.Fprintf(w, "  none open — %s, run with --all to see them\n",
+			hidden); err != nil {
 			return err
 		}
 		return nil
@@ -117,11 +140,25 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 	}
 
 	summary := fmt.Sprintf("\n  %s · %d running", plural(len(rows), "session"), running)
-	if ended > 0 && !opts.ShowAll {
-		summary += fmt.Sprintf(" · %d ended hidden (--all)", ended)
+	if hidden != "" && !opts.ShowAll {
+		summary += fmt.Sprintf(" · %s hidden (--all)", hidden)
 	}
 	_, err := fmt.Fprintln(w, summary)
 	return err
+}
+
+// hiddenSummary names what was left out and why, so a short list is never
+// mistaken for the whole registry. The horizon is spelled by the same type
+// that parses it, so what status reports back matches what was configured.
+func hiddenSummary(ended, old int, horizon time.Duration) string {
+	var parts []string
+	if ended > 0 {
+		parts = append(parts, fmt.Sprintf("%d ended", ended))
+	}
+	if old > 0 {
+		parts = append(parts, fmt.Sprintf("%d older than %s", old, config.Duration(horizon)))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // pad widens by rune count, so a title containing non-ASCII still lines up.

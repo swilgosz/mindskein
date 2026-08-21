@@ -67,6 +67,14 @@ func (s *Session) Stale(now time.Time) bool {
 	return now.Sub(s.LastEventAt) > StaleAfter
 }
 
+// Older reports whether the session has been quiet for longer than the
+// retention horizon, whatever status it claims — nothing removes a record that
+// never reported its ending, so the registry only ever grows without this. A
+// zero horizon never hides anything.
+func (s *Session) Older(now time.Time, horizon time.Duration) bool {
+	return horizon > 0 && now.Sub(s.LastEventAt) > horizon
+}
+
 // Ended reports whether the session is over. Unlike staleness this is reported,
 // not guessed — though it can be missed entirely if the process dies hard.
 func (s *Session) Ended() bool { return s.Status == StatusEnded }
