@@ -38,7 +38,7 @@ archives:
       - LICENSE
       - docs/plan-format.md
 
-checksums:
+checksum:
   name_template: checksums.txt
 
 changelog:
