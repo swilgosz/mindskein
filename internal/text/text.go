@@ -38,3 +38,17 @@ func Summarize(s string, n int) string {
 	}
 	return strings.TrimRight(string(cut), " ,;:·") + "…"
 }
+
+// Clean strips the control characters out of s, leaving ordinary spaces.
+//
+// The brief prints prose that was typed or pasted into a session, and a paste
+// carrying terminal escapes would otherwise redraw the page it is printed on:
+// an ESC moves the cursor, and a carriage return overwrites the line above.
+func Clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
