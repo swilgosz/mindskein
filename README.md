@@ -1,7 +1,6 @@
 # mindskein
 
-One command for the question you ask every morning: **what are my priorities,
-what's running elsewhere, and where did we leave off?**
+One command for the question you ask every morning: **what are my priorities, what's running elsewhere, and where did we leave off?**
 
 ```
 PRIORITIES
@@ -23,17 +22,13 @@ WHERE WE LEFT OFF
   acme-api             2026-08-20 21:05  (no prompt recorded)
 ```
 
-Three sections, three sources: a markdown file you already keep, a registry of
-live Claude Code sessions, and the last handoff from each piece of work.
+Three sections, three sources: a markdown file you already keep, a registry of live Claude Code sessions, and the last handoff from each piece of work.
 
 ## What it is
 
-A single Go binary and four Claude Code hooks. No daemon, no database, no
-server, no account. The hooks record what your sessions are doing into
-`~/.mindskein/`; the CLI reads it back.
+A single Go binary and four Claude Code hooks. No daemon, no database, no server, no account. The hooks record what your sessions are doing into `~/.mindskein/`; the CLI reads it back.
 
-It exists because the alternative is asking Claude the same four questions
-every morning and stitching the answers together by hand.
+It exists because the alternative is asking Claude the same four questions every morning and stitching the answers together by hand.
 
 ## Install
 
@@ -136,13 +131,9 @@ several folders and sessions. It is the only grouping key that does.
   hooks.log         appended to only when a hook fails
 ```
 
-**Everything stays on your machine.** Nothing is uploaded, and the tool makes
-no network calls at all.
+**Everything stays on your machine.** Nothing is uploaded, and the tool makes no network calls at all.
 
-Be aware of what a handoff holds: **the last message you typed**, verbatim, up
-to 1500 characters. That is the point — it is what answers "where did we leave
-off" — but it means anything you paste into a session can land in
-`~/.mindskein/handoffs/`. The directory is created `0700` and the files `0600`.
+Be aware of what a handoff holds: **the last message you typed**, verbatim, up to 1500 characters. That is the point — it is what answers "where did we leave off" — but it means anything you paste into a session can land in `~/.mindskein/handoffs/`. The directory is created `0700` and the files `0600`.
 
 To remove everything: `rm -rf ~/.mindskein` (and un-register the hooks).
 
@@ -165,8 +156,17 @@ throughout a session and always describes the latest state.
 
 ## Status
 
-Working and used daily. Not yet at its own v0.1 definition of done, and there
-are sharp edges worth knowing before you install it:
+`brief` runs on real data and is in daily use as of 2026-08-22. Two separate
+things are worth knowing, and they are easy to confuse.
+
+**Its own v0.1 is one item short, and that item is not code.** The definition of
+done asks for five consecutive mornings of actually reaching for this before the
+first work block — a tool nobody reaches for is not finished, however green the
+tests are. That count starts now. The rest of it — the command answering from
+real captured data, a public repo, green CI — is met.
+
+**The sharp edges below are a separate list.** None of them block that
+definition. They are what to weigh before registering four global hooks:
 
 - **A hook crash can disturb the session it is watching.** The hooks are
   registered synchronously and there is no panic guard yet, and a Go binary
@@ -188,8 +188,7 @@ are sharp edges worth knowing before you install it:
 `go build ./... && go vet ./... && go test ./...`, plus `gofmt -l .` and
 `scripts/cover.sh 85`. CI runs the same against the Go version in `go.mod`.
 
-Behaviour is specified as failing scenarios before it is implemented — see
-[`AGENTS.md`](AGENTS.md) for why, and for the rest of the repo conventions.
+Behaviour is specified as failing scenarios before it is implemented — see [`AGENTS.md`](AGENTS.md) for why, and for the rest of the repo conventions.
 
 ## License
 
