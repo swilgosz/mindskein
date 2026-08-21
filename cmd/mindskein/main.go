@@ -16,6 +16,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
+	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
 )
 
@@ -44,7 +45,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
 			return cmdStatus(args, stdout, stderr)
 		}},
-		{"priorities", "print the !1/!2 lines parsed out of plan.md", cmdPriorities},
+		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
+			return cmdPriorities(args, stdout, stderr)
+		}},
 		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
 		{"version", "print the mindskein version", func([]string, io.Reader) error {
 			fmt.Fprintln(stdout, version)
@@ -92,8 +95,49 @@ func usage(w io.Writer, commands []command) {
 // the usage text and the command set stay honest.
 var errNotImplemented = errors.New("not implemented yet")
 
-func cmdBrief([]string, io.Reader) error      { return errNotImplemented }
-func cmdPriorities([]string, io.Reader) error { return errNotImplemented }
+func cmdBrief([]string, io.Reader) error { return errNotImplemented }
+
+// cmdPriorities prints the PRIORITIES block: what the vault's plan.md calls the
+// current focus, and what is queued behind it.
+//
+// Every way of having nothing to show — no config, no plan file, no priority
+// lines in it — prints the section with one line saying which, because a
+// morning brief that stack-traces is worse than one that is briefly empty.
+func cmdPriorities(args []string, stdout, stderr io.Writer) error {
+	cfg, cfgErr := loadConfig()
+
+	flags := flag.NewFlagSet("priorities", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	all := flags.Bool("all", false, "include the !3 backlog")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if cfgErr != nil {
+		fmt.Fprintf(stderr, "mindskein: %v\n", cfgErr)
+	}
+
+	path := cfg.Vault.PlanPath()
+	if path == "" {
+		return priorities.Hint(stdout,
+			"no plan configured — set vault.path and vault.plan in "+configFile())
+	}
+	plan, err := priorities.ParseFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return priorities.Hint(stdout, "no plan at "+path)
+	}
+	if err != nil {
+		return err
+	}
+
+	levels := priorities.Shown
+	if *all {
+		levels = priorities.All
+	}
+	return priorities.Render(stdout, plan, priorities.RenderOptions{Levels: levels})
+}
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and
 // the only way to read the registry without opening the JSON by hand.
@@ -138,11 +182,18 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 // loadConfig reads ~/.mindskein/config.toml, which sits beside the session
 // registry. It always returns a usable configuration; the error is advisory.
 func loadConfig() (config.Config, error) {
+	return config.Load(configFile())
+}
+
+// configFile names the file to edit. It is printed in hints, so it falls back
+// to the path as a reader would write it rather than to an error: a message
+// about where to put a setting must not itself fail.
+func configFile() string {
 	home, err := session.Home()
 	if err != nil {
-		return config.Defaults(), err
+		return "~/.mindskein/config.toml"
 	}
-	return config.Load(filepath.Join(home, "config.toml"))
+	return filepath.Join(home, "config.toml")
 }
 
 // sessionLabels names sessions by their handoff title. The registry cannot

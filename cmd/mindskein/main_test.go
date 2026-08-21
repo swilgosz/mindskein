@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestRunUnknownCommand(t *testing.T) {
 }
 
 func TestRunDispatchesToUnimplementedCommands(t *testing.T) {
-	for _, args := range [][]string{{"brief"}, {"priorities"}} {
+	for _, args := range [][]string{{"brief"}} {
 		err := run(args, nil, io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
 			t.Errorf("run(%v) = %v, want not-implemented error", args, err)
@@ -477,6 +478,73 @@ func TestStatusRetentionHorizon(t *testing.T) {
 		t.Setenv("MINDSKEIN_HOME", t.TempDir())
 		if err := run([]string{"status", "--hide-after=soon"}, nil, io.Discard, io.Discard); err == nil {
 			t.Error("want a flag parse error rather than a silent fallback")
+		}
+	})
+}
+
+// TestRunPrioritiesReadsThePlan checks the command wiring: config to plan file
+// to output. The parsing and rendering themselves are covered in
+// internal/priorities.
+func TestRunPrioritiesReadsThePlan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+	vault := t.TempDir()
+
+	plan := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
+		"- [ ] !3 Dig Deeper feature — later\n"
+	if err := os.WriteFile(filepath.Join(vault, "plan.md"), []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("says where to configure a plan when none is set", func(t *testing.T) {
+		var stdout bytes.Buffer
+		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
+			t.Fatalf("run(priorities) = %v, want nil", err)
+		}
+		if !strings.Contains(stdout.String(), "config.toml") {
+			t.Errorf("stdout = %q, want the file to edit", stdout.String())
+		}
+	})
+
+	config := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"plan.md\"\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("prints the priorities the configured plan declares", func(t *testing.T) {
+		var stdout bytes.Buffer
+		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
+			t.Fatalf("run(priorities) = %v, want nil", err)
+		}
+		if !strings.Contains(stdout.String(), "Wren Deploy Tool") {
+			t.Errorf("stdout = %q, want the !1 item", stdout.String())
+		}
+		if strings.Contains(stdout.String(), "Dig Deeper") {
+			t.Errorf("stdout = %q, want the backlog left out", stdout.String())
+		}
+	})
+
+	t.Run("includes the backlog with --all", func(t *testing.T) {
+		var stdout bytes.Buffer
+		if err := run([]string{"priorities", "--all"}, nil, &stdout, io.Discard); err != nil {
+			t.Fatalf("run(priorities --all) = %v, want nil", err)
+		}
+		if !strings.Contains(stdout.String(), "Dig Deeper") {
+			t.Errorf("stdout = %q, want the backlog listed", stdout.String())
+		}
+	})
+
+	t.Run("says so when the configured plan is not there", func(t *testing.T) {
+		missing := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"absent.md\"\n"
+		if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(missing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var stdout bytes.Buffer
+		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
+			t.Fatalf("run(priorities) = %v, want nil, not a stack trace", err)
+		}
+		if !strings.Contains(stdout.String(), "no plan at") {
+			t.Errorf("stdout = %q, want the missing path named", stdout.String())
 		}
 	})
 }

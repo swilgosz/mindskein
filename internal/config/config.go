@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,49 @@ const DefaultHideAfter = 7 * 24 * time.Hour
 // Config is the contents of ~/.mindskein/config.toml.
 type Config struct {
 	Status Status `toml:"status"`
+	Vault  Vault  `toml:"vault"`
+}
+
+// Vault locates the notes the brief reads. Both keys are hand-written and
+// neither has a default: guessing a vault layout would be guessing at somebody
+// else's filesystem, and a wrong guess reads as "no priorities today".
+type Vault struct {
+	// Path is the vault root, and may be written with a leading ~.
+	Path string `toml:"path"`
+
+	// Plan is the note holding the !1/!2 lines, either absolute or relative
+	// to Path.
+	Plan string `toml:"plan"`
+}
+
+// PlanPath is the absolute path of the plan note, or "" when the file has not
+// configured one.
+func (v Vault) PlanPath() string {
+	plan := expandHome(v.Plan)
+	switch {
+	case plan == "":
+		return ""
+	case filepath.IsAbs(plan):
+		return filepath.Clean(plan)
+	}
+	root := expandHome(v.Path)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, plan)
+}
+
+// expandHome resolves a leading ~, which is how a home-relative path is
+// written by hand and is not otherwise meaningful to the filesystem.
+func expandHome(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~"))
 }
 
 // Status configures the live sessions listing.
@@ -66,6 +110,10 @@ func Load(path string) (Config, error) {
 	// the same as leaving the key out.
 	if meta.IsDefined("status", "hide_after") {
 		cfg.Status.HideAfter = file.Status.HideAfter
+	}
+	cfg.Vault = file.Vault
+	if cfg.Vault.Plan != "" && cfg.Vault.PlanPath() == "" {
+		return cfg, fmt.Errorf("%s: vault.plan is relative but vault.path is not set", path)
 	}
 	// A misspelled key is the failure this whole file is meant to avoid: a
 	// setting that appears to do nothing. Everything understood is applied
