@@ -79,6 +79,33 @@ func TestToolResultsAreNotUserMessages(t *testing.T) {
 	}
 }
 
+// TestInjectedNotificationsAreNotPrompts covers the records the runtime writes
+// as the user: every promptSource "system" record across the transcripts on
+// this machine is a task-notification, so accepting them makes a handoff
+// report "<task-notification>" as the last thing that was asked.
+func TestInjectedNotificationsAreNotPrompts(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "what the human asked"),
+		userLine("2026-08-18T08:00:10Z", "system",
+			"<task-notification><task-id>abc</task-id></task-notification>"),
+	)
+	if tr.LastMessage != "what the human asked" {
+		t.Errorf("LastMessage = %q, an injected notification must not win", tr.LastMessage)
+	}
+}
+
+// TestPromptsFromAnotherClientCount guards the other half: an sdk prompt is a
+// person asking through a different client, not machine chatter.
+func TestPromptsFromAnotherClientCount(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "the first question"),
+		userLine("2026-08-18T08:00:10Z", "sdk", "the question from elsewhere"),
+	)
+	if tr.LastMessage != "the question from elsewhere" {
+		t.Errorf("LastMessage = %q, want the sdk prompt", tr.LastMessage)
+	}
+}
+
 func TestSidechainRecordsAreIgnored(t *testing.T) {
 	tr := parse(t,
 		userLine("2026-08-18T08:00:00Z", "typed", "what the human asked"),

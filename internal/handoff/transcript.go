@@ -112,7 +112,7 @@ func parseTranscript(r io.Reader) (*Transcript, error) {
 					// promptSource is what separates a human prompt from the
 					// tool results also recorded as user records; content shape
 					// is not a reliable discriminator.
-					if rec.PromptSource == "" {
+					if !asked(rec.PromptSource) {
 						break
 					}
 					if text := textOf(rec.Message.Content); text != "" {
@@ -188,6 +188,21 @@ func decode(line string) (record, bool) {
 		return record{}, false
 	}
 	return rec, true
+}
+
+// asked reports whether a user record is something a person actually asked.
+//
+// "system" is not, and it is the one that matters: every such record on this
+// machine is a task-notification the runtime injects, so accepting it makes
+// the last message read "<task-notification>" rather than the last thing the
+// person said. "sdk" is kept — those are real prompts arriving from another
+// client, not machine chatter. An empty source is a tool result.
+func asked(source string) bool {
+	switch source {
+	case "typed", "queued", "sdk":
+		return true
+	}
+	return false
 }
 
 func stamp(t *Transcript, ts time.Time) {
