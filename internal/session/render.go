@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/config"
+	"github.com/swilgosz/mindskein/internal/text"
 )
 
 const (
@@ -102,8 +103,8 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 
 		rows = append(rows, row{
 			id:      s.ShortID(),
-			label:   truncate(label, maxLabelWidth),
-			project: truncate(project, maxProjectWidth),
+			label:   text.Truncate(label, maxLabelWidth),
+			project: text.Truncate(project, maxProjectWidth),
 			status:  status,
 			age:     age(now.Sub(s.LastEventAt)),
 			event:   s.LastEvent,
@@ -131,7 +132,7 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 
 	for _, r := range rows {
 		line := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %*s",
-			idW, r.id, labelW, pad(r.label, labelW), projW, pad(r.project, projW),
+			idW, r.id, labelW, r.label, projW, r.project,
 			statusW, r.status, ageW, r.age)
 		if r.event != "" {
 			line += "  (" + r.event + ")"
@@ -163,14 +164,6 @@ func hiddenSummary(ended, old int, horizon time.Duration) string {
 	return strings.Join(parts, " and ")
 }
 
-// pad widens by rune count, so a title containing non-ASCII still lines up.
-func pad(s string, n int) string {
-	for len([]rune(s)) < n {
-		s += " "
-	}
-	return s
-}
-
 // age renders an elapsed duration at the resolution the reader cares about:
 // minutes while a session is live, hours once it has been idle a while.
 func age(d time.Duration) string {
@@ -184,13 +177,6 @@ func age(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 	}
-}
-
-func truncate(s string, n int) string {
-	if len([]rune(s)) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
 }
 
 func plural(n int, noun string) string {
