@@ -10,6 +10,10 @@ import (
 	"github.com/swilgosz/mindskein/internal/text"
 )
 
+// Heading names the block, and is what a caller prints when the block itself
+// could not be produced.
+const Heading = "LIVE SESSIONS"
+
 const (
 	maxLabelWidth   = 30
 	maxProjectWidth = 22
@@ -49,7 +53,7 @@ type RenderOptions struct {
 // record owns presenting it; the brief composes this block rather than
 // reimplementing it.
 func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions) error {
-	if _, err := fmt.Fprintln(w, "LIVE SESSIONS"); err != nil {
+	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
 	}
 

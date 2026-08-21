@@ -9,6 +9,10 @@ import (
 	"github.com/swilgosz/mindskein/internal/text"
 )
 
+// Heading names the block, and is what a caller prints when the block itself
+// could not be produced.
+const Heading = "PRIORITIES"
+
 // Column widths, set against the real plan rather than guessed: project notes
 // in the vault are named for their folder, and those run to 34 characters.
 const (
@@ -75,7 +79,7 @@ func Render(w io.Writer, plan Plan, opts RenderOptions) error {
 	if len(rows) == 0 {
 		return Hint(w, emptyReason(plan, levels))
 	}
-	if _, err := fmt.Fprintln(w, "PRIORITIES"); err != nil {
+	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
 	}
 	for _, r := range rows {
@@ -99,7 +103,7 @@ func Render(w io.Writer, plan Plan, opts RenderOptions) error {
 // way of having no priorities to show — no config, no plan file, nothing at
 // !1 or !2 — is a state to report, not an error to fail on.
 func Hint(w io.Writer, hint string) error {
-	if _, err := fmt.Fprintln(w, "PRIORITIES"); err != nil {
+	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(w, "  "+hint)

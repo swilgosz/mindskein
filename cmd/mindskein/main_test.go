@@ -46,15 +46,6 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestRunDispatchesToUnimplementedCommands(t *testing.T) {
-	for _, args := range [][]string{{"brief"}} {
-		err := run(args, nil, io.Discard, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
-			t.Errorf("run(%v) = %v, want not-implemented error", args, err)
-		}
-	}
-}
-
 func TestRunHookRejectsBadEvent(t *testing.T) {
 	for _, args := range [][]string{{"hook"}, {"hook", "post-tool-use"}} {
 		err := run(args, nil, io.Discard, io.Discard)
