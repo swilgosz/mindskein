@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/session"
+	"github.com/swilgosz/mindskein/internal/text"
 )
 
 const (
@@ -60,11 +61,16 @@ func (h *Handoff) Name() string {
 
 // Named is what this work was called, empty when nothing named it. A caller
 // that must be able to tell a real title from a folder asks for this.
+//
+// Flattened, because a title is not curated text: with no rename and no
+// generated title it is the first thing the person typed, newlines, tabs and
+// any pasted terminal escapes included. The stored fields keep the original —
+// this is the display form, and every renderer reaches the title through here.
 func (h *Handoff) Named() string {
 	if h.Project != "" {
-		return h.Project
+		return text.OneLine(h.Project)
 	}
-	return h.Title
+	return text.OneLine(h.Title)
 }
 
 // Label prefers what a human chose over what was generated, falling back to

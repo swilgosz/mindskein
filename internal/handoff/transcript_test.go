@@ -106,6 +106,20 @@ func TestPromptsFromAnotherClientCount(t *testing.T) {
 	}
 }
 
+// TestUnknownPromptSourceCounts is the reason the rule names what to reject.
+// A source nobody has seen yet is far more likely to be a person asking
+// through a newer client than a new kind of injection, and quietly keeping the
+// previous prompt would leave the brief reporting the wrong place to pick up.
+func TestUnknownPromptSourceCounts(t *testing.T) {
+	tr := parse(t,
+		userLine("2026-08-18T08:00:00Z", "typed", "the old question"),
+		userLine("2026-08-18T08:00:10Z", "slash-command", "the newer question"),
+	)
+	if tr.LastMessage != "the newer question" {
+		t.Errorf("LastMessage = %q, an unrecognised source must not be dropped", tr.LastMessage)
+	}
+}
+
 func TestSidechainRecordsAreIgnored(t *testing.T) {
 	tr := parse(t,
 		userLine("2026-08-18T08:00:00Z", "typed", "what the human asked"),

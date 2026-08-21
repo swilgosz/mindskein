@@ -192,17 +192,20 @@ func decode(line string) (record, bool) {
 
 // asked reports whether a user record is something a person actually asked.
 //
-// "system" is not, and it is the one that matters: every such record on this
-// machine is a task-notification the runtime injects, so accepting it makes
-// the last message read "<task-notification>" rather than the last thing the
-// person said. "sdk" is kept — those are real prompts arriving from another
-// client, not machine chatter. An empty source is a tool result.
+// Two sources are not. An empty one is a tool result. "system" is the runtime
+// writing as the user: of the 19 such records on this machine, 18 are
+// task-notifications and one is a message forwarded from another session — all
+// injected, none typed, and accepting them makes the last message read
+// "<task-notification>" rather than the last thing the person said.
+//
+// Named as what to reject rather than what to accept. An unrecognised source
+// is far more likely to be a person asking through a client that did not exist
+// when this was written than a new kind of injection, and the two failures are
+// not symmetric: showing an unknown injection is visible and gets fixed, while
+// silently keeping the previous prompt leaves the brief confidently reporting
+// the wrong place to pick up.
 func asked(source string) bool {
-	switch source {
-	case "typed", "queued", "sdk":
-		return true
-	}
-	return false
+	return source != "" && source != "system"
 }
 
 func stamp(t *Transcript, ts time.Time) {

@@ -56,11 +56,13 @@ func Render(w io.Writer, handoffs []*Handoff, opts RenderOptions) error {
 		shown, hidden = groups[:DefaultLimit], len(groups)-DefaultLimit
 	}
 
+	names := distinctNames(shown)
+
 	type row struct{ label, when, message string }
 	rows := make([]row, 0, len(shown))
 	labelW, whenW := 0, 0
-	for _, h := range shown {
-		label := text.Truncate(labelOf(h), maxLabelWidth)
+	for i, h := range shown {
+		label := text.Truncate(labelOf(names[i], h), maxLabelWidth)
 		when := endedAt(h)
 		labelW = max(labelW, len([]rune(label)))
 		whenW = max(whenW, len([]rune(when)))
@@ -107,15 +109,78 @@ func endedAt(h *Handoff) string {
 	return h.EndedAt.Local().Format(timeLayout)
 }
 
-// labelOf names the line: the workstream, and the branch it sat on where there
-// is one. The branch belongs here because one worktree is one task, so it is
-// the difference between two lines of the same repository.
-func labelOf(h *Handoff) string {
-	name := h.ProjectName()
+// labelOf names the line: the workstream, and the branch the representative
+// handoff sat on where there is one. Like the time and the message beside it,
+// the branch describes that handoff rather than the group — only the name
+// identifies the group.
+func labelOf(name string, h *Handoff) string {
 	if h.Branch != "" {
 		name += " · " + h.Branch
 	}
-	return name
+	// Flattened once here rather than per part: every field on this row was
+	// parsed out of a file a person can edit by hand.
+	return text.OneLine(name)
+}
+
+// distinctNames names each group so that no two rows read alike. A name is a
+// basename — of a repository, or of the folder a session ran in — and
+// basenames repeat: an archived checkout beside its live one, or the same
+// folder name under two parents. Two rows reading "mindskein" name nothing.
+//
+// The qualifier is the directory containing whatever the name was taken from,
+// which is exactly the part of the key that made the groups different.
+func distinctNames(groups []*Handoff) []string {
+	names := make([]string, len(groups))
+	repeats := make(map[string]int, len(groups))
+	for i, h := range groups {
+		names[i] = h.ProjectName()
+		repeats[names[i]]++
+	}
+	for i, h := range groups {
+		if repeats[names[i]] < 2 {
+			continue
+		}
+		if qualifier := qualifierOf(h); qualifier != "" {
+			names[i] = qualifier + "/" + names[i]
+		}
+	}
+	return names
+}
+
+func qualifierOf(h *Handoff) string {
+	switch {
+	case h.Project != "":
+		// An explicit project is the key itself, so two groups cannot share
+		// one; nothing here would be telling them apart.
+		return ""
+	case h.Repo != "":
+		return parentName(h.Repo)
+	case h.Title != "":
+		// The title is the name and the folder is the rest of the key.
+		return baseName(h.CWD)
+	default:
+		return parentName(h.CWD)
+	}
+}
+
+func parentName(path string) string {
+	trimmed := strings.TrimRight(path, string(filepath.Separator))
+	if trimmed == "" {
+		return ""
+	}
+	parent := filepath.Dir(trimmed)
+	if parent == "." || parent == string(filepath.Separator) {
+		return ""
+	}
+	return baseName(parent)
+}
+
+func baseName(path string) string {
+	trimmed := strings.TrimRight(path, string(filepath.Separator))
+	if trimmed == "" {
+		return ""
+	}
+	return text.OneLine(filepath.Base(trimmed))
 }
 
 // message is the last thing that was asked, which is the closest thing to
@@ -123,7 +188,7 @@ func labelOf(h *Handoff) string {
 // only its opening line survives the column.
 func message(h *Handoff) string {
 	first, _, _ := strings.Cut(h.Message, "\n")
-	first = strings.Join(strings.Fields(text.Clean(first)), " ")
+	first = text.OneLine(first)
 	if first == "" {
 		return "(no prompt recorded)"
 	}
@@ -173,9 +238,8 @@ func (h *Handoff) ProjectName() string {
 }
 
 func repoName(repo string) string {
-	trimmed := strings.TrimRight(repo, string(filepath.Separator))
-	if trimmed == "" {
-		return "(unknown)"
+	if name := baseName(repo); name != "" {
+		return name
 	}
-	return filepath.Base(trimmed)
+	return "(unknown)"
 }

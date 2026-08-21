@@ -70,6 +70,17 @@ func runBrief(t *testing.T, args ...string) string {
 	return stdout.String()
 }
 
+// section is one block of the brief, from its heading to the blank line that
+// ends it.
+func section(out, heading string) string {
+	_, rest, ok := strings.Cut(out, heading)
+	if !ok {
+		return ""
+	}
+	body, _, _ := strings.Cut(strings.TrimLeft(rest, "\n"), "\n\n")
+	return body
+}
+
 func TestBriefCommand(t *testing.T) {
 	t.Run("prints all three sections", func(t *testing.T) {
 		briefHome(t)
@@ -125,6 +136,32 @@ func TestBriefCommand(t *testing.T) {
 		out := runBrief(t)
 		if !strings.Contains(out, "nothing recorded yet") {
 			t.Errorf("brief does not explain an empty handoff store:\n%s", out)
+		}
+	})
+
+	t.Run("a session titled by a raw first prompt cannot break the sessions block", func(t *testing.T) {
+		briefHome(t)
+		// The sessions block names sessions by their handoff title, and an
+		// unrenamed session's title is the first thing the person typed.
+		writeHandoff(t, &handoff.Handoff{
+			SessionID: "aaaa1111",
+			Title:     "fix \x1b[31mthe\x1b[0m bug\nin the parser",
+			CWD:       "/Users/seb/Projects/mindskein",
+			Repo:      "/Users/seb/Projects/mindskein",
+			Message:   "carry on",
+			EndedAt:   ended(t, "2026-08-21T18:00:00Z"),
+		})
+
+		out := runBrief(t)
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("an escape sequence reached the terminal:\n%q", out)
+		}
+		sessions := section(out, session.Heading)
+		if strings.Count(sessions, "aaaa1111") != 1 {
+			t.Errorf("the session is not on exactly one row:\n%q", sessions)
+		}
+		if strings.Contains(sessions, "in the parser\n") {
+			t.Errorf("a newline in the title split the row:\n%q", sessions)
 		}
 	})
 

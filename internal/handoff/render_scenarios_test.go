@@ -192,6 +192,18 @@ func TestWhereWeLeftOff(t *testing.T) {
 		}
 	})
 
+	t.Run("a hand-edited branch cannot break the page either", func(t *testing.T) {
+		out := render(t, []*Handoff{
+			{SessionID: "a", Repo: "/code/ms", Branch: "u4\x1b[31m\nbrief", Message: "x", EndedAt: ended(21, 18)},
+		}, RenderOptions{})
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("an escape sequence reached the terminal:\n%q", out)
+		}
+		if got := rows(out); len(got) != 1 {
+			t.Fatalf("rendered %d rows, want 1:\n%q", len(got), out)
+		}
+	})
+
 	t.Run("beyond the default limit the count left out is printed", func(t *testing.T) {
 		out := render(t, many(DefaultLimit+3), RenderOptions{})
 		if got := rows(out); len(got) != DefaultLimit {
@@ -249,6 +261,78 @@ func TestWhereWeLeftOff(t *testing.T) {
 		}
 		if !strings.Contains(out, "why is [31mthis[0m red") {
 			t.Errorf("the prompt text itself did not survive:\n%q", out)
+		}
+	})
+
+	t.Run("a generated title carrying escapes and newlines cannot break the page", func(t *testing.T) {
+		// With no rename and no generated title, the title is the first thing
+		// the person typed — so it is exactly as raw as the message column.
+		out := render(t, []*Handoff{
+			{SessionID: "a", CWD: "/vault/business", Title: "fix \x1b[31mthe\x1b[0m bug\nin the parser",
+				Message: "go on", EndedAt: ended(21, 18)},
+			{SessionID: "b", CWD: "/vault/other", Title: "short", Message: "second", EndedAt: ended(20, 18)},
+		}, RenderOptions{})
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("an escape sequence reached the terminal:\n%q", out)
+		}
+		got := rows(out)
+		if len(got) != 2 {
+			t.Fatalf("rendered %d rows, want 2 — a newline split one in half:\n%q", len(got), out)
+		}
+		if column(got[0], "go on") != column(got[1], "second") {
+			t.Errorf("the columns do not line up:\n%s", out)
+		}
+	})
+
+	t.Run("a tab in a prompt does not run the words either side together", func(t *testing.T) {
+		out := render(t, []*Handoff{
+			{SessionID: "a", Repo: "/code/ms", Message: "foo\tbar baz", EndedAt: ended(21, 18)},
+		}, RenderOptions{})
+		if !strings.Contains(out, "foo bar baz") {
+			t.Errorf("the tab did not become a space:\n%q", out)
+		}
+	})
+
+	t.Run("two repositories sharing a basename are told apart", func(t *testing.T) {
+		out := render(t, []*Handoff{
+			{SessionID: "a", Repo: "/Users/x/Projects/mindskein", Message: "live", EndedAt: ended(21, 18)},
+			{SessionID: "b", Repo: "/Users/x/Projects/Archive/mindskein", Message: "archived", EndedAt: ended(20, 18)},
+		}, RenderOptions{})
+		got := rows(out)
+		if len(got) != 2 {
+			t.Fatalf("rendered %d rows, want 2:\n%s", len(got), out)
+		}
+		live := strings.Fields(got[0])[0]
+		archived := strings.Fields(got[1])[0]
+		if live == archived {
+			t.Errorf("both rows are named %q — the reader cannot tell which is which:\n%s", live, out)
+		}
+		if !strings.Contains(archived, "Archive") {
+			t.Errorf("the qualifier does not say where %q is:\n%s", archived, out)
+		}
+	})
+
+	t.Run("the same title in two folders is told apart", func(t *testing.T) {
+		out := render(t, []*Handoff{
+			{SessionID: "a", CWD: "/vault/business", Title: "planner", Message: "one", EndedAt: ended(21, 18)},
+			{SessionID: "b", CWD: "/vault/life", Title: "planner", Message: "two", EndedAt: ended(20, 18)},
+		}, RenderOptions{})
+		got := rows(out)
+		if len(got) != 2 {
+			t.Fatalf("rendered %d rows, want 2:\n%s", len(got), out)
+		}
+		if strings.Fields(got[0])[0] == strings.Fields(got[1])[0] {
+			t.Errorf("two workstreams kept apart by the grouping render alike:\n%s", out)
+		}
+	})
+
+	t.Run("a name that repeats nowhere is left unqualified", func(t *testing.T) {
+		out := render(t, []*Handoff{
+			{SessionID: "a", Repo: "/Users/x/Projects/mindskein", Message: "live", EndedAt: ended(21, 18)},
+			{SessionID: "b", Repo: "/Users/x/Projects/other", Message: "elsewhere", EndedAt: ended(20, 18)},
+		}, RenderOptions{})
+		if strings.Contains(out, "Projects/mindskein") {
+			t.Errorf("an unambiguous name was qualified anyway:\n%s", out)
 		}
 	})
 
