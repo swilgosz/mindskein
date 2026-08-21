@@ -38,9 +38,10 @@ It exists because the alternative is asking Claude the same four questions every
 go install github.com/swilgosz/mindskein/cmd/mindskein@latest
 ```
 
-**From a release:** download the archive for your platform from
-[Releases](https://github.com/swilgosz/mindskein/releases), verify it against
-`checksums.txt`, and put `mindskein` somewhere on your `PATH`.
+**From a release:** nothing is tagged yet, so `go install` is the only route
+today. Once there is a tag, [Releases](https://github.com/swilgosz/mindskein/releases)
+carries archives for macOS, Linux and Windows on amd64 and arm64, with a
+`checksums.txt` to verify them against.
 
 ## Set up
 
@@ -180,13 +181,19 @@ definition. They are what to weigh before registering four global hooks:
   uninstall, so both steps above are hand-edited files. Uninstalling the binary
   without un-registering the hooks leaves them pointing at a command that no
   longer exists.
-- **A session that dies hard is still reported as running** until it ages past
-  `hide_after`. No hook fires when a terminal is killed.
+- **A session that dies hard keeps its last status for a while.** No hook fires
+  when a terminal is killed, so the record simply stops changing. After 72
+  hours the row is marked `running (stale)` and stops counting toward the
+  running total; it disappears at `hide_after` (7 days by default). Between
+  the kill and the 72-hour mark, the status is stated with more confidence
+  than it deserves.
 
 ## Contributing
 
-`go build ./... && go vet ./... && go test ./...`, plus `gofmt -l .` and
-`scripts/cover.sh 85`. CI runs the same against the Go version in `go.mod`.
+`go build ./... && go vet ./... && go test ./...`, plus `gofmt -l .`,
+`scripts/scenarios.sh` and `scripts/cover.sh 85`. CI runs all of those against
+the Go version in `go.mod`, and builds the release archives without publishing
+them.
 
 Behaviour is specified as failing scenarios before it is implemented — see [`AGENTS.md`](AGENTS.md) for why, and for the rest of the repo conventions.
 

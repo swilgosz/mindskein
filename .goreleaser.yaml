@@ -18,11 +18,11 @@ builds:
     # platforms without flock; it is compiled, not tested on hardware.
     goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
-    # -X sets the string `mindskein version` prints. Without it every release
-    # would report "dev", and a bug report would not say which build it came
-    # from.
+    # -X sets the string `mindskein version` prints. .Tag rather than .Version
+    # because .Version drops the leading v, and a reporter reads the version off
+    # the release page, the git tag or the install line — all of which carry it.
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w -X main.version={{ .Tag }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
