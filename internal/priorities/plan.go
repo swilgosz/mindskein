@@ -41,18 +41,34 @@ type Item struct {
 	Done bool
 }
 
+// Plan is what one file yielded: the priority items, and enough about what was
+// *not* counted to explain an empty result. A reader who is told only "nothing
+// found" cannot tell a quiet week from a file written to another convention.
+type Plan struct {
+	Items []Item
+	// Checkboxes is every task line seen, tagged or not.
+	Checkboxes int
+	// Source is the file the items came from, empty when parsed from a reader.
+	Source string
+}
+
 // itemPattern matches a priority line: a checkbox, then the level token. Both
 // halves are required, because plan.md is prose — it carries checkboxes with no
 // priority and priorities with no checkbox (a legend table explaining the
 // convention), and neither is work.
 var itemPattern = regexp.MustCompile(`^[-*+]\s+\[([ xX])\]\s+!([123])\s+(.*)$`)
 
+// checkboxPattern is deliberately looser than itemPattern: it is not used to
+// select work, only to answer "was this file full of tasks I did not
+// understand, or empty of them?"
+var checkboxPattern = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+\[[ xX]\]`)
+
 // linkPattern matches an Obsidian wikilink, embed marker included.
 var linkPattern = regexp.MustCompile(`!?\[\[([^\[\]]+)\]\]`)
 
 // Parse reads priority lines in the order the plan declares them.
-func Parse(r io.Reader) ([]Item, error) {
-	var items []Item
+func Parse(r io.Reader) (Plan, error) {
+	var plan Plan
 	scanner := bufio.NewScanner(r)
 	// A single !1 line runs to a paragraph of dated commentary; the default
 	// 64 KB token is ample, but a markdown table in the same file need not be.
@@ -70,6 +86,9 @@ func Parse(r io.Reader) ([]Item, error) {
 		if fenced {
 			continue
 		}
+		if checkboxPattern.MatchString(line) {
+			plan.Checkboxes++
+		}
 		match := itemPattern.FindStringSubmatch(line)
 		if match == nil {
 			continue
@@ -78,32 +97,35 @@ func Parse(r io.Reader) ([]Item, error) {
 		if label == "" {
 			continue
 		}
-		items = append(items, Item{
+		plan.Items = append(plan.Items, Item{
 			Level: Level(match[2][0] - '0'),
 			Label: label,
 			Note:  note,
 			Done:  match[1] != " ",
 		})
 	}
-	return items, scanner.Err()
+	return plan, scanner.Err()
 }
 
 // ParseFile reads the plan note at path.
-func ParseFile(path string) ([]Item, error) {
+func ParseFile(path string) (Plan, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return Plan{}, err
 	}
 	defer f.Close()
-	return Parse(f)
+
+	plan, err := Parse(f)
+	plan.Source = path
+	return plan, err
 }
 
-// split separates the label from the status prose at the em dash the task
-// convention puts between them, and resolves whichever wikilink names the work.
+// split separates the label from the status prose, and resolves whichever
+// wikilink names the work.
 func split(rest string) (label, note string) {
 	head, tail := rest, ""
-	if i := dash(rest); i >= 0 {
-		head, tail = rest[:i], rest[i+len("—"):]
+	if at, width := separator(rest); at >= 0 {
+		head, tail = rest[:at], rest[at+width:]
 	}
 	if link := linkPattern.FindStringSubmatch(head); link != nil {
 		label = linkLabel(link[1])
@@ -119,21 +141,47 @@ func split(rest string) (label, note string) {
 	return label, note
 }
 
-// dash finds the separating em dash, ignoring any inside a wikilink: a note
-// title may contain one, and splitting there would cut the label in half.
-func dash(s string) int {
+// separators are tried a tier at a time. The em dash is what this convention
+// was written with, so a line that has one splits there wherever it sits; the
+// rest are what someone typing the same idea on an ordinary keyboard produces,
+// and only get a say when there is no em dash to defer to.
+//
+// The fallbacks require surrounding spaces because a bare hyphen is not a
+// separator in prose — it is inside "3-email" and "2026-08-12", and splitting
+// there would cut a date in half.
+var separators = [][]string{
+	{"—"},
+	{" – ", " - ", ": "},
+}
+
+// separator finds where the label ends, ignoring anything inside a wikilink: a
+// note title may contain a dash, and splitting there cuts the label in half.
+func separator(s string) (at, width int) {
+	for _, tier := range separators {
+		if at, width = firstOutsideLink(s, tier); at >= 0 {
+			return at, width
+		}
+	}
+	return -1, 0
+}
+
+func firstOutsideLink(s string, candidates []string) (at, width int) {
 	depth := 0
-	for i, r := range s {
+	for i := range s {
 		switch {
 		case strings.HasPrefix(s[i:], "[["):
 			depth++
 		case strings.HasPrefix(s[i:], "]]"):
 			depth--
-		case r == '—' && depth <= 0:
-			return i
+		case depth <= 0:
+			for _, candidate := range candidates {
+				if strings.HasPrefix(s[i:], candidate) {
+					return i, len(candidate)
+				}
+			}
 		}
 	}
-	return -1
+	return -1, 0
 }
 
 // linkLabel turns a wikilink target into something worth printing in a narrow

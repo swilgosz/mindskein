@@ -124,7 +124,7 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 		return priorities.Hint(stdout,
 			"no plan configured — set vault.path and vault.plan in "+configFile())
 	}
-	items, err := priorities.ParseFile(path)
+	plan, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return priorities.Hint(stdout, "no plan at "+path)
 	}
@@ -136,7 +136,7 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 	if *all {
 		levels = priorities.All
 	}
-	return priorities.Render(stdout, items, priorities.RenderOptions{Levels: levels})
+	return priorities.Render(stdout, plan, priorities.RenderOptions{Levels: levels})
 }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and

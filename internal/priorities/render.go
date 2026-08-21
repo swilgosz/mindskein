@@ -3,6 +3,7 @@ package priorities
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/swilgosz/mindskein/internal/text"
@@ -35,7 +36,8 @@ type RenderOptions struct {
 
 // Render writes the PRIORITIES block: the whole of `mindskein priorities`, and
 // one of the three sections of the morning brief.
-func Render(w io.Writer, items []Item, opts RenderOptions) error {
+func Render(w io.Writer, plan Plan, opts RenderOptions) error {
+	items := plan.Items
 	levels := opts.Levels
 	if len(levels) == 0 {
 		levels = Shown
@@ -71,7 +73,7 @@ func Render(w io.Writer, items []Item, opts RenderOptions) error {
 	}
 
 	if len(rows) == 0 {
-		return Hint(w, "nothing at "+join(levels)+" in the plan")
+		return Hint(w, emptyReason(plan, levels))
 	}
 	if _, err := fmt.Fprintln(w, "PRIORITIES"); err != nil {
 		return err
@@ -102,6 +104,51 @@ func Hint(w io.Writer, hint string) error {
 	}
 	_, err := fmt.Fprintln(w, "  "+hint)
 	return err
+}
+
+// emptyReason says why the list is empty, because the four reasons want four
+// different reactions. The one that matters is the third: a file written to
+// another convention parses to nothing, and "nothing found" reads as either a
+// broken tool or a free morning, when in fact it is neither.
+func emptyReason(plan Plan, levels []Level) string {
+	name := "the plan"
+	if plan.Source != "" {
+		name = filepath.Base(plan.Source)
+	}
+
+	if len(plan.Items) == 0 {
+		if plan.Checkboxes == 0 {
+			return "no checkboxes in " + name + " — is that the right file?"
+		}
+		return fmt.Sprintf("read %s in %s, none tagged !1/!2/!3 — a priority looks like:  - [ ] !1 Ship the thing - why it matters",
+			count(plan.Checkboxes, "checkbox", "checkboxes"), name)
+	}
+
+	backlog, done := 0, 0
+	for _, item := range plan.Items {
+		switch {
+		case item.Done && shows(levels, item.Level):
+			done++
+		case !item.Done && !shows(levels, item.Level):
+			backlog++
+		}
+	}
+	switch {
+	case backlog > 0:
+		return fmt.Sprintf("nothing at %s — %s further down (--all)", join(levels),
+			count(backlog, "item", "items"))
+	case done > 0:
+		return fmt.Sprintf("nothing open at %s — %s done", join(levels),
+			count(done, "item", "items"))
+	}
+	return "nothing at " + join(levels) + " in " + name
+}
+
+func count(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 func shows(levels []Level, level Level) bool {

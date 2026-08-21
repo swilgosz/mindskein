@@ -12,11 +12,11 @@ import (
 // table and the fenced example that make plan.md prose rather than a data file.
 func plan(t *testing.T) []Item {
 	t.Helper()
-	items, err := ParseFile(filepath.Join("testdata", "plan.md"))
+	parsed, err := ParseFile(filepath.Join("testdata", "plan.md"))
 	if err != nil {
 		t.Fatalf("ParseFile() = %v, want nil", err)
 	}
-	return items
+	return parsed.Items
 }
 
 func labels(items []Item, level Level) []string {
@@ -42,11 +42,11 @@ func find(t *testing.T, items []Item, label string) Item {
 
 func parse(t *testing.T, line string) []Item {
 	t.Helper()
-	items, err := Parse(strings.NewReader(line))
+	parsed, err := Parse(strings.NewReader(line))
 	if err != nil {
 		t.Fatalf("Parse() = %v, want nil", err)
 	}
-	return items
+	return parsed.Items
 }
 
 func one(t *testing.T, line string) Item {
@@ -61,7 +61,7 @@ func one(t *testing.T, line string) Item {
 func render(t *testing.T, items []Item, opts RenderOptions) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Render(&buf, items, opts); err != nil {
+	if err := Render(&buf, Plan{Items: items}, opts); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	return buf.String()
@@ -348,13 +348,16 @@ func TestRenderingPriorities(t *testing.T) {
 		}
 	})
 
-	t.Run("hints instead of printing nothing when the plan has no priorities", func(t *testing.T) {
+	t.Run("prints the section even when there is nothing in it", func(t *testing.T) {
+		// The brief has three sections and always has three: a section that
+		// vanishes when empty reads as a rendering bug. Which explanation
+		// appears is covered in TestExplainingAnEmptyResult.
 		out := render(t, nil, RenderOptions{})
 		if !strings.HasPrefix(out, "PRIORITIES\n") {
 			t.Errorf("the section is printed even when empty:\n%s", out)
 		}
-		if !strings.Contains(out, "!1 or !2") {
-			t.Errorf("the hint should say what was looked for:\n%s", out)
+		if len(strings.TrimSpace(strings.TrimPrefix(out, "PRIORITIES\n"))) == 0 {
+			t.Errorf("an empty section still owes the reader a reason:\n%s", out)
 		}
 	})
 
@@ -404,4 +407,113 @@ func isWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 func utf8Valid(s string) bool {
 	return strings.ToValidUTF8(s, "\uFFFD") == s
+}
+
+// TestSeparatorsAStrangerWouldType covers the one arbitrary rule in the format.
+// A checkbox and a level token are a convention anyone can follow; requiring an
+// em dash specifically is a requirement about someone's keyboard.
+func TestSeparatorsAStrangerWouldType(t *testing.T) {
+	t.Run("splits on a spaced hyphen when there is no em dash", func(t *testing.T) {
+		item := one(t, "- [ ] !1 Ship the thing - why it matters")
+		if item.Label != "Ship the thing" || item.Note != "why it matters" {
+			t.Errorf("item = %+v", item)
+		}
+	})
+
+	t.Run("splits on a colon when there is no dash", func(t *testing.T) {
+		item := one(t, "- [ ] !1 Login bug: session drops on refresh")
+		if item.Label != "Login bug" || item.Note != "session drops on refresh" {
+			t.Errorf("item = %+v", item)
+		}
+	})
+
+	t.Run("prefers the em dash when a line carries both", func(t *testing.T) {
+		// Otherwise the vault's own entries would split at the first hyphen in
+		// a project name rather than at the separator.
+		item := one(t, "- [ ] !1 automateideasai.com - AI builders campaign — 4 defects live")
+		if item.Label != "automateideasai.com - AI builders campaign" {
+			t.Errorf("label = %q", item.Label)
+		}
+		if item.Note != "4 defects live" {
+			t.Errorf("note = %q", item.Note)
+		}
+	})
+
+	t.Run("leaves a hyphenated word alone", func(t *testing.T) {
+		// Spaces are what make a separator: dates and compounds have none.
+		item := one(t, "- [ ] !2 ConvertKit reactivation sequence: 3-email bridge for 152 subs")
+		if item.Note != "3-email bridge for 152 subs" {
+			t.Errorf("note = %q, want the compound intact", item.Note)
+		}
+		plain := one(t, "- [ ] !2 Ship 2026-08-12 release")
+		if plain.Label != "Ship 2026-08-12 release" {
+			t.Errorf("label = %q, want the date intact", plain.Label)
+		}
+	})
+
+	t.Run("ignores a separator inside a wikilink", func(t *testing.T) {
+		item := one(t, "- [ ] !3 [[MCP Function Calling - Use Case Ideas]] - five ideas")
+		if item.Label != "MCP Function Calling - Use Case Ideas" {
+			t.Errorf("label = %q", item.Label)
+		}
+		if item.Note != "five ideas" {
+			t.Errorf("note = %q", item.Note)
+		}
+	})
+}
+
+// TestExplainingAnEmptyResult covers what a reader sees when nothing prints.
+//
+// The failure this exists for: someone points the tool at a file full of
+// perfectly good tasks written to a different convention, and is told "nothing
+// at !1 or !2" — which reads as "this is broken", or worse, as "you have
+// nothing to do".
+func TestExplainingAnEmptyResult(t *testing.T) {
+	parsePlan := func(t *testing.T, body string) Plan {
+		t.Helper()
+		p, err := Parse(strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("Parse() = %v, want nil", err)
+		}
+		return p
+	}
+	show := func(t *testing.T, p Plan) string {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := Render(&buf, p, RenderOptions{}); err != nil {
+			t.Fatalf("Render() = %v, want nil", err)
+		}
+		return buf.String()
+	}
+
+	t.Run("counts the checkboxes it read when none carry a priority", func(t *testing.T) {
+		out := show(t, parsePlan(t, "# Tasks\n- [ ] p1 Fix the login bug\n- [ ] p1 Call the accountant\n- [ ] p2 README\n"))
+		if !strings.Contains(out, "3 checkboxes") {
+			t.Errorf("the reader should learn the file was read: %q", out)
+		}
+		if !strings.Contains(out, "!1") || !strings.Contains(out, "- [ ]") {
+			t.Errorf("the hint should show the format it wants: %q", out)
+		}
+	})
+
+	t.Run("says the file has no checkboxes at all", func(t *testing.T) {
+		out := show(t, parsePlan(t, "# Notes\n\nSome prose, no tasks anywhere.\n"))
+		if !strings.Contains(out, "no checkboxes") {
+			t.Errorf("a file with no tasks is a different problem: %q", out)
+		}
+	})
+
+	t.Run("points at --all when everything sits in the backlog", func(t *testing.T) {
+		out := show(t, parsePlan(t, "- [ ] !3 Someday idea\n- [ ] !3 Another one\n"))
+		if !strings.Contains(out, "--all") || !strings.Contains(out, "2") {
+			t.Errorf("hidden work should be named, not silently absent: %q", out)
+		}
+	})
+
+	t.Run("says so when everything at the shown levels is done", func(t *testing.T) {
+		out := show(t, parsePlan(t, "- [x] !1 Shipped it\n- [x] !2 Also shipped\n"))
+		if !strings.Contains(out, "done") {
+			t.Errorf("an empty list because the work is finished is good news: %q", out)
+		}
+	})
 }
