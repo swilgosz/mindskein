@@ -32,3 +32,10 @@ jobs:
 
       - name: Coverage
         run: ./scripts/cover.sh 85
+
+      # The release config is only exercised by a tag push, which is the worst
+      # moment to discover it is invalid.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
