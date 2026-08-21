@@ -52,7 +52,11 @@ type Payload struct {
 	NotificationType string `json:"notification_type"`
 
 	// SessionEnd: clear, resume, logout, prompt_input_exit or other.
-	SessionEndReason string `json:"session_end_reason"`
+	//
+	// The wire name is `reason`, not `session_end_reason`. The first spelling
+	// silently produced an empty reason on every real session end, because an
+	// absent JSON key is not an error.
+	SessionEndReason string `json:"reason"`
 
 	// Present only when the event came from a subagent. The session id is
 	// still the parent's, so subagent activity correctly keeps the session
@@ -106,7 +110,7 @@ var waitingNotifications = map[string]bool{
 // normal outcome for most notification types.
 func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) (*session.Session, error) {
 	var status session.Status
-	var lastEvent string
+	var lastEvent, endReason string
 
 	switch ev {
 	case EventPreToolUse:
@@ -126,10 +130,14 @@ func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) 
 		// missed — a SIGKILLed process never gets to run a hook — which is why
 		// silence is still tracked separately.
 		status = session.StatusEnded
-		lastEvent = p.SessionEndReason
-		if lastEvent == "" {
-			lastEvent = "other"
+		// "other" is what the reason means when it is absent, so both fields
+		// get it — storing the raw empty string leaves the record disagreeing
+		// with itself.
+		endReason = p.SessionEndReason
+		if endReason == "" {
+			endReason = "other"
 		}
+		lastEvent = endReason
 	case EventStop:
 		// Stop fires on every turn completion, not at session end — so this
 		// means "idle between turns". The idle_prompt notification that
@@ -148,7 +156,7 @@ func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) 
 			return
 		}
 		if ev == EventSessionEnd {
-			s.EndReason = p.SessionEndReason
+			s.EndReason = endReason
 		}
 		s.Status = status
 		s.LastEvent = lastEvent

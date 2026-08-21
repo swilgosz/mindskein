@@ -106,6 +106,10 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	all := fs.Bool("all", false, "include sessions that have ended or aged out")
 	fs.Var(&hideAfter, "hide-after", "hide sessions quiet for longer than this (0 keeps every one)")
 	if err := fs.Parse(args); err != nil {
+		// -h is a request, not a failure: flag has already printed the usage.
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if cfgErr != nil {
@@ -159,7 +163,10 @@ func sessionLabels() map[string]string {
 	}
 	labels := make(map[string]string, len(handoffs))
 	for _, h := range handoffs {
-		if label := h.Label(); label != "" {
+		// Named, not Label: Label falls back to the folder, which would fill
+		// this map for every session and leave the renderer unable to tell a
+		// real title from the folder it already prints in the next column.
+		if label := h.Named(); label != "" {
 			labels[h.SessionID] = label
 		}
 	}

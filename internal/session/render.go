@@ -64,16 +64,16 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 	for _, s := range sessions {
 		// A session past the horizon that also ended counts as ended: that is
 		// the reported fact, and counting it twice would overstate the total.
-		hidden := true
+		hide := true
 		switch {
 		case s.Ended():
 			ended++
 		case s.Older(now, opts.HideAfter):
 			old++
 		default:
-			hidden = false
+			hide = false
 		}
-		if hidden && !opts.ShowAll {
+		if hide && !opts.ShowAll {
 			continue
 		}
 
@@ -86,7 +86,9 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 			// still sitting there.
 			status += " (stale)"
 		}
-		if s.Status == StatusRunning {
+		// A stale status may simply be lying, so it cannot be counted as
+		// running: the summary would then contradict the row above it.
+		if s.Status == StatusRunning && !s.Stale(now) {
 			running++
 		}
 

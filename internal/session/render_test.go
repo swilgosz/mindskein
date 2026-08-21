@@ -69,7 +69,7 @@ func TestRenderMarksStale(t *testing.T) {
 	now := time.Date(2026, 8, 17, 23, 10, 0, 0, time.UTC)
 	sessions := []*Session{{
 		ID: "dead0001", ProjectPath: "/Users/seb/Projects/old",
-		Status: StatusWaiting, LastEvent: "idle_prompt",
+		Status: StatusRunning, LastEvent: "Bash",
 		LastEventAt: now.Add(-StaleAfter - time.Hour),
 	}}
 
@@ -81,7 +81,8 @@ func TestRenderMarksStale(t *testing.T) {
 	if !strings.Contains(got, "stale") {
 		t.Errorf("a session past StaleAfter should be marked stale:\n%s", got)
 	}
-	// Stale sessions must not be counted as running.
+	// A stale status may be lying, so it must not be counted as running — with
+	// StatusWaiting here this assertion passed whatever the counter did.
 	if !strings.Contains(got, "0 running") {
 		t.Errorf("stale session counted as running:\n%s", got)
 	}

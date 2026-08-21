@@ -243,7 +243,7 @@ func TestSessionEndHookMarksEnded(t *testing.T) {
 	t.Setenv("MINDSKEIN_HOME", home)
 
 	payload := `{"session_id":"ffff6666","cwd":"/tmp/x","hook_event_name":"SessionEnd",` +
-		`"session_end_reason":"logout"}`
+		`"reason":"logout"}`
 	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
 		t.Fatalf("run(hook session-end) = %v, want nil", err)
 	}
@@ -264,13 +264,86 @@ func TestSessionEndHookMarksEnded(t *testing.T) {
 	}
 }
 
+// TestSessionEndWithoutAReason pins the shape every real SessionEnd payload
+// had while the field was misspelled: no reason at all. The record must not
+// then disagree with itself.
+func TestSessionEndWithoutAReason(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/x","hook_event_name":"SessionEnd"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "sessions", "aaaa1111.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got session.Session
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EndReason != "other" || got.LastEvent != "other" {
+		t.Errorf("end_reason = %q, last_event = %q — want both %q", got.EndReason, got.LastEvent, "other")
+	}
+}
+
+// TestStatusShowsWhyASessionEnded is the end-to-end the misspelling defeated:
+// a real payload must reach the rendered row.
+func TestStatusShowsWhyASessionEnded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/x","reason":"prompt_input_exit"}`
+	if err := run([]string{"hook", "session-end"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := status(t, "--all")
+	if !strings.Contains(out, "prompt_input_exit") {
+		t.Errorf("status --all must say why the session ended:\n%s", out)
+	}
+}
+
+// TestStatusHelpIsNotAFailure: -h is advertised in the top-level usage.
+func TestStatusHelpIsNotAFailure(t *testing.T) {
+	t.Setenv("MINDSKEIN_HOME", t.TempDir())
+	if err := run([]string{"status", "-h"}, nil, io.Discard, io.Discard); err != nil {
+		t.Errorf("run(status -h) = %v, want nil", err)
+	}
+}
+
+// TestStatusDoesNotPrintTheFolderTwice covers the join between the two stores:
+// a handoff with no title must not fill the label column with the folder the
+// next column already shows.
+func TestStatusDoesNotPrintTheFolderTwice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MINDSKEIN_HOME", home)
+
+	// No transcript, so the handoff gets no title — the path
+	// TestStopHookSurvivesAMissingTranscript already exercises.
+	payload := `{"session_id":"aaaa1111","cwd":"/tmp/somerepo","transcript_path":"/nope/missing.jsonl"}`
+	if err := run([]string{"hook", "stop"}, strings.NewReader(payload), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := status(t)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "aaaa1111") {
+			continue
+		}
+		if strings.Count(line, "somerepo") > 1 {
+			t.Errorf("folder printed in both columns:\n%s", line)
+		}
+	}
+}
+
 // TestEndedSessionSurvivesALateStop: hooks run in parallel, so a slower Stop
 // can land after the end event and must not resurrect a finished session.
 func TestEndedSessionSurvivesALateStop(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MINDSKEIN_HOME", home)
 
-	end := `{"session_id":"ffff6666","cwd":"/tmp/x","session_end_reason":"logout"}`
+	end := `{"session_id":"ffff6666","cwd":"/tmp/x","reason":"logout"}`
 	stop := `{"session_id":"ffff6666","cwd":"/tmp/x"}`
 	if err := run([]string{"hook", "session-end"}, strings.NewReader(end), io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
