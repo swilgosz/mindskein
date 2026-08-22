@@ -24,10 +24,28 @@ import (
 // removes those, so without a horizon the registry only ever grows.
 const DefaultHideAfter = 7 * 24 * time.Hour
 
+// DefaultPruneSessions and DefaultPruneHandoffs are how long state survives
+// before prune deletes it.
+//
+// Both are far past DefaultHideAfter. Hiding a record is a display decision
+// and costs nothing if it is wrong; deleting one is permanent, so these are
+// set beyond any plausible pause — a month is roughly four times the longest
+// real gap measured between a session going quiet and being resumed.
+//
+// Handoffs outlive session records threefold. A session record is a live
+// status that stops meaning anything once the process is gone; a handoff is
+// the answer to "where did we leave off", which is what the tool exists to
+// give back.
+const (
+	DefaultPruneSessions = 30 * 24 * time.Hour
+	DefaultPruneHandoffs = 90 * 24 * time.Hour
+)
+
 // Config is the contents of ~/.mindskein/config.toml.
 type Config struct {
-	Status Status `toml:"status"`
-	Vault  Vault  `toml:"vault"`
+	Status    Status    `toml:"status"`
+	Vault     Vault     `toml:"vault"`
+	Retention Retention `toml:"retention"`
 }
 
 // Vault locates the notes the brief reads. Both keys are hand-written and
@@ -79,9 +97,28 @@ type Status struct {
 	HideAfter Duration `toml:"hide_after"`
 }
 
+// Retention is how long state is kept before prune deletes it. Both are far
+// longer than the display horizon in [status]: hiding a record is reversible
+// and deleting one is not.
+type Retention struct {
+	// Sessions drops session records quiet for longer than this. Zero keeps
+	// them forever, which is what every version before this one did.
+	Sessions Duration `toml:"sessions"`
+
+	// Handoffs drops handoffs that ended longer ago than this. Kept longer
+	// than Sessions: a handoff is the answer the tool exists to give.
+	Handoffs Duration `toml:"handoffs"`
+}
+
 // Defaults is the configuration used when there is no file to read.
 func Defaults() Config {
-	return Config{Status: Status{HideAfter: Duration(DefaultHideAfter)}}
+	return Config{
+		Status: Status{HideAfter: Duration(DefaultHideAfter)},
+		Retention: Retention{
+			Sessions: Duration(DefaultPruneSessions),
+			Handoffs: Duration(DefaultPruneHandoffs),
+		},
+	}
 }
 
 // Load reads path, falling back to Defaults for anything it does not set.
@@ -110,6 +147,14 @@ func Load(path string) (Config, error) {
 	// the same as leaving the key out.
 	if meta.IsDefined("status", "hide_after") {
 		cfg.Status.HideAfter = file.Status.HideAfter
+	}
+	// Same reasoning as hide_after: an explicit 0 turns retention off, and is
+	// not the same as leaving the key out.
+	if meta.IsDefined("retention", "sessions") {
+		cfg.Retention.Sessions = file.Retention.Sessions
+	}
+	if meta.IsDefined("retention", "handoffs") {
+		cfg.Retention.Handoffs = file.Retention.Handoffs
 	}
 	cfg.Vault = file.Vault
 	if cfg.Vault.Plan != "" && cfg.Vault.PlanPath() == "" {

@@ -80,6 +80,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
+		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
+			return cmdPrune(args, stdout, stderr)
+		}},
 		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
 			return cmdHook(args, stdin, stderr)
 		}},
@@ -397,7 +400,16 @@ func handleHook(event hook.Event, stdin io.Reader) error {
 	if event != hook.EventStop {
 		return nil
 	}
-	return recordHandoff(sess, payload, now)
+	if err := recordHandoff(sess, payload, now); err != nil {
+		return err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		// A broken config must not stop the sweep from running on defaults,
+		// the same way it does not stop the brief from printing.
+		cfg = config.Defaults()
+	}
+	return pruneDaily(cfg, now)
 }
 
 // recordHandoff writes the session handoff once a turn completes.
@@ -444,5 +456,95 @@ func appendHookLog(line string) error {
 	}
 	defer f.Close()
 	_, err = io.WriteString(f, line)
+	return err
+}
+
+// cmdPrune deletes state past the retention horizons.
+//
+// It is the only command that removes anything, so it says what rule it
+// applied and offers --dry-run to answer the question without acting on it.
+func cmdPrune(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dryRun := fs.Bool("dry-run", false, "report what would be removed without removing it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "mindskein: %v\n", err)
+	}
+	res, err := prune(cfg, time.Now().UTC(), *dryRun)
+	for _, r := range res {
+		fmt.Fprintln(stdout, r.Summary())
+	}
+	return err
+}
+
+// prune sweeps both stores and returns one result per store. A failure on one
+// does not stop the other: they are independent directories, and a permission
+// problem on handoffs is no reason to leave session records uncollected.
+func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResult, error) {
+	var results []*session.PruneResult
+	var firstErr error
+
+	if store, err := session.DefaultStore(); err != nil {
+		firstErr = err
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Sessions), dryRun); err != nil {
+		firstErr = err
+	} else {
+		results = append(results, res)
+	}
+
+	if store, err := handoff.DefaultStore(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Handoffs), dryRun); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		results = append(results, res)
+	}
+
+	// Both are returned. Whatever was collected is worth reporting, and the
+	// failure is still a failure: swallowing it because the other store
+	// happened to succeed would let a directory quietly stop being pruned.
+	return results, firstErr
+}
+
+// pruneStamp is the file recording the last sweep. Without it the hook would
+// walk both directories on every turn.
+const pruneStamp = "last-prune"
+
+// pruneDaily sweeps at most once a day, from the Stop hook.
+//
+// Stop is the right place: it already pays for a transcript read, so one extra
+// stat is nothing, and unlike SessionEnd it cannot be missed by a process that
+// dies hard. PreToolUse would be the wrong place — it runs on every single
+// tool call and must stay out of the way.
+//
+// Errors are returned to the caller, which logs and swallows them. Collecting
+// old files is never worth disturbing a live session over.
+func pruneDaily(cfg config.Config, now time.Time) error {
+	home, err := session.Home()
+	if err != nil {
+		return err
+	}
+	stamp := filepath.Join(home, pruneStamp)
+	if info, err := os.Stat(stamp); err == nil && now.Sub(info.ModTime()) < 24*time.Hour {
+		return nil
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	// Stamp first. If the sweep fails, the next attempt is tomorrow rather
+	// than on every turn for the rest of the day.
+	if err := os.WriteFile(stamp, []byte(now.Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		return err
+	}
+	_, err = prune(cfg, now, false)
 	return err
 }
