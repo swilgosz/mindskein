@@ -20,6 +20,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/hook"
 	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
+	"github.com/swilgosz/mindskein/internal/text"
 )
 
 // version is overridden at build time with
@@ -79,7 +80,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
-		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
+		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
+			return cmdHook(args, stdin, stderr)
+		}},
 		{"version", "print the mindskein version", func([]string, io.Reader) error {
 			fmt.Fprintln(stdout, buildVersion())
 			return nil
@@ -323,7 +326,7 @@ func labelsFrom(handoffs []*handoff.Handoff) map[string]string {
 // session. Only a misconfigured invocation (missing or unknown event name) is
 // reported as an error, because that one is a typo in settings.json and
 // nothing will ever be recorded until it is fixed.
-func cmdHook(args []string, stdin io.Reader) error {
+func cmdHook(args []string, stdin io.Reader, stderr io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("hook: expected one of %v", hook.Events)
 	}
@@ -331,10 +334,47 @@ func cmdHook(args []string, stdin io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("hook: %w", err)
 	}
-	if err := handleHook(event, stdin); err != nil {
-		logHookFailure(event, err)
+	if err := safely(func() error { return hookRunner(event, stdin) }); err != nil {
+		logHookFailure(event, err, stderr)
 	}
 	return nil
+}
+
+// hookRunner is the body of a hook, indirected so a test can substitute one
+// that panics. The property being protected is the process exit status, and
+// nothing short of a real panic in a real process demonstrates it.
+var hookRunner = handleHook
+
+// safely runs fn and turns a panic into an ordinary error.
+//
+// Without this the panic reaches the runtime, which exits 2 — the one status
+// PreToolUse reads as "block this tool call". A crash in the observer would
+// stop the work it was only supposed to watch, and the user would see a
+// blocked tool with no explanation anywhere.
+//
+// It cannot catch a runtime fatal error: a concurrent map write or a stack
+// overflow bypasses recover and still exits 2. Those are bugs to prevent
+// rather than absorb.
+func safely(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v | %s", r, oneLineStack())
+		}
+	}()
+	return fn()
+}
+
+// maxStack caps the flattened stack. The log is read a line at a time, so the
+// frames that matter are the first few; the rest is the test harness or the
+// runtime.
+const maxStack = 2000
+
+func oneLineStack() string {
+	stack := text.OneLine(string(debug.Stack()))
+	if len(stack) > maxStack {
+		stack = stack[:maxStack] + " ..."
+	}
+	return stack
 }
 
 func handleHook(event hook.Event, stdin io.Reader) error {
@@ -377,21 +417,32 @@ func recordHandoff(sess *session.Session, payload *hook.Payload, now time.Time) 
 	return err
 }
 
-// logHookFailure appends one line to ~/.mindskein/hooks.log. Every failure
-// path here is itself ignored: if mindskein cannot even log, the hook still
-// must not disturb the session.
-func logHookFailure(event hook.Event, cause error) {
+// logHookFailure appends one line to ~/.mindskein/hooks.log.
+//
+// When even that fails — an unwritable state directory is the case that
+// matters — it says so on stderr instead. A hook exits 0 either way, and a
+// hook that both does nothing and reports nothing is indistinguishable from
+// one that works.
+func logHookFailure(event hook.Event, cause error, stderr io.Writer) {
+	line := fmt.Sprintf("%s\t%s\t%v\n", time.Now().UTC().Format(time.RFC3339), event, cause)
+	if err := appendHookLog(line); err != nil {
+		fmt.Fprintf(stderr, "mindskein: %s hook failed: %v (and could not write the log: %v)\n", event, cause, err)
+	}
+}
+
+func appendHookLog(line string) error {
 	home, err := session.Home()
 	if err != nil {
-		return
+		return err
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(filepath.Join(home, "hooks.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\t%s\t%v\n", time.Now().UTC().Format(time.RFC3339), event, cause)
+	_, err = io.WriteString(f, line)
+	return err
 }
