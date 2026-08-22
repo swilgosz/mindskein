@@ -18,6 +18,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
+	"github.com/swilgosz/mindskein/internal/install"
 	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
 	"github.com/swilgosz/mindskein/internal/text"
@@ -79,6 +80,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}},
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
+		}},
+		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
+			return cmdInit(args, stdout, stderr)
 		}},
 		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
 			return cmdPrune(args, stdout, stderr)
@@ -547,4 +551,95 @@ func pruneDaily(cfg config.Config, now time.Time) error {
 	}
 	_, err = prune(cfg, now, false)
 	return err
+}
+
+// defaultTimeout is the per-hook limit written into settings.json. Every hook
+// here does a little file IO and, once a day, a directory sweep; five seconds
+// is generous for that and short enough to bound a pathological case.
+const defaultTimeout = 5
+
+// cmdInit registers the hooks in Claude Code's settings.json, or removes them.
+//
+// It exists because the alternative is asking someone to hand-edit the file
+// that controls their whole setup, and because deleting the binary without an
+// uninstall leaves four hooks pointing at a command that is no longer there.
+func cmdInit(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	uninstall := fs.Bool("uninstall", false, "remove mindskein's hooks instead of installing them")
+	dryRun := fs.Bool("dry-run", false, "report what would change without changing it")
+	settings := fs.String("settings", "", "path to settings.json (default ~/.claude/settings.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	path := *settings
+	if path == "" {
+		var err error
+		if path, err = defaultSettingsPath(); err != nil {
+			return err
+		}
+	}
+
+	if *uninstall {
+		rep, err := install.Unregister(path, *dryRun)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, rep)
+		fmt.Fprintln(stdout, "state in ~/.mindskein was left in place; remove it by hand if you want it gone")
+		return nil
+	}
+
+	binary, err := binaryPath()
+	if err != nil {
+		return err
+	}
+	rep, err := install.Register(path, install.Options{
+		Binary:  binary,
+		Timeout: defaultTimeout,
+		Async:   true,
+	}, *dryRun)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, rep)
+
+	if !*dryRun {
+		created, err := install.EnsureConfig(configFile())
+		if err != nil {
+			return err
+		}
+		if created {
+			fmt.Fprintf(stdout, "wrote a starter config at %s\n", configFile())
+		}
+	}
+	fmt.Fprintln(stdout, "restart Claude Code for the hooks to take effect")
+	return nil
+}
+
+func defaultSettingsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude", "settings.json"), nil
+}
+
+// binaryPath is the absolute path to this executable, with symlinks resolved.
+//
+// A hook runs with no PATH guarantee, so the command has to be absolute. The
+// symlink is resolved because a Homebrew install puts the real binary in the
+// Cellar and links it into the prefix; recording the link would break the
+// hooks on the next upgrade.
+func binaryPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locating the mindskein binary: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return exe, nil
+	}
+	return resolved, nil
 }
