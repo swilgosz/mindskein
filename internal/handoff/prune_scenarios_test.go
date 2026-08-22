@@ -114,3 +114,62 @@ func TestPruneKeepsHandoffsLongerThanSessions(t *testing.T) {
 		}
 	})
 }
+
+// TestPruneFallsBackToModTime covers the half-written handoff. Parsing is the
+// normal path; a file with no readable end time still has to be collectable,
+// or a crash mid-write leaves a record nothing can ever remove.
+func TestPruneFallsBackToModTime(t *testing.T) {
+	t.Run("collects an unreadable handoff once it is old", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		path := store.Dir + "/broke001.md"
+		if err := os.WriteFile(path, []byte("---\ntruncated"), 0o600); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+		old := now.Add(-config.DefaultPruneHandoffs - 24*time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatalf("aging: %v", err)
+		}
+		res, err := store.Prune(now, config.DefaultPruneHandoffs, false)
+		if err != nil {
+			t.Fatalf("Prune: %v", err)
+		}
+		if len(res.Removed) != 1 {
+			t.Errorf("Removed = %v, want the stale unreadable handoff", res.Removed)
+		}
+	})
+
+	t.Run("leaves an unreadable handoff that is still recent", func(t *testing.T) {
+		// A file being written right now also fails to parse.
+		store := &Store{Dir: t.TempDir()}
+		path := store.Dir + "/broke001.md"
+		if err := os.WriteFile(path, []byte("---\ntruncated"), 0o600); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+		if _, err := store.Prune(now, config.DefaultPruneHandoffs, false); err != nil {
+			t.Fatalf("Prune: %v", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Error("a handoff being written was collected mid-write")
+		}
+	})
+
+	t.Run("a handoff with no end time is judged by its file", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		h := &Handoff{SessionID: "noend001", Title: "x", CWD: "/tmp/x", Status: "done"}
+		if err := store.Write(h); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+		path, _ := store.Path("noend001")
+		old := now.Add(-config.DefaultPruneHandoffs - 24*time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatalf("aging: %v", err)
+		}
+		res, err := store.Prune(now, config.DefaultPruneHandoffs, false)
+		if err != nil {
+			t.Fatalf("Prune: %v", err)
+		}
+		if len(res.Removed) != 1 {
+			t.Errorf("Removed = %v, want the record with no end time", res.Removed)
+		}
+	})
+}
