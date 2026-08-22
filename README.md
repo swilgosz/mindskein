@@ -38,10 +38,22 @@ It exists because the alternative is asking Claude the same four questions every
 go install github.com/swilgosz/mindskein/cmd/mindskein@latest
 ```
 
-**From a release:** nothing is tagged yet, so `go install` is the only route
-today. Once there is a tag, [Releases](https://github.com/swilgosz/mindskein/releases)
+**From a release:** [Releases](https://github.com/swilgosz/mindskein/releases)
 carries archives for macOS, Linux and Windows on amd64 and arm64, with a
-`checksums.txt` to verify them against.
+`checksums.txt` to verify them against:
+
+```sh
+tar xzf mindskein_0.1.0_darwin_arm64.tar.gz
+shasum -a 256 -c checksums.txt --ignore-missing
+mv mindskein /usr/local/bin/
+```
+
+macOS will quarantine a binary downloaded through a browser; `xattr -d
+com.apple.quarantine mindskein` clears it, or download with `curl` instead.
+The archives are not notarised.
+
+**Homebrew:** not yet. It is worth a tap once there is any evidence someone
+other than the author wants this.
 
 ## Set up
 
