@@ -45,7 +45,20 @@ carries archives for macOS, Linux and Windows on amd64 and arm64, with a
 
 ## Set up
 
-Two steps. Neither is done for you yet — see [Status](#status).
+```
+mindskein init
+```
+
+That registers all four hooks in `~/.claude/settings.json` and writes a starter
+config. It backs the file up first, only touches its own entries, and leaves
+the rest of your settings — including hooks from other tools — exactly as it
+found them. Run it again any time; it is idempotent, and it repairs a
+registration written by an older version instead of adding a second one.
+
+`mindskein init --dry-run` shows what it would change without changing it, and
+`mindskein init --uninstall` removes the hooks again.
+
+Then restart Claude Code, and point it at your plan.
 
 ### 1. Point it at your plan
 
@@ -73,40 +86,48 @@ A priority is a checkbox **and** a level token:
 The full contract — what splits a label from its note, how wikilinks resolve,
 what is deliberately not supported — is in [`docs/plan-format.md`](docs/plan-format.md).
 
-### 2. Register the hooks
+### 2. Check it is recording
 
-Nothing is recorded until Claude Code calls the hooks. **Back up your settings
-first** (`cp ~/.claude/settings.json ~/.claude/settings.json.bak`), then merge
-this into `~/.claude/settings.json`:
+Open a session, run a tool, then:
+
+```
+mindskein status
+```
+
+The session should be listed. If it is empty, check what was registered with
+`mindskein init --dry-run` — it prints the current state without touching
+anything.
+
+<details>
+<summary>What <code>init</code> writes, if you would rather do it by hand</summary>
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "mindskein hook pre-tool-use", "timeout": 5 }] }
+      { "hooks": [{ "type": "command", "command": "/absolute/path/to/mindskein hook pre-tool-use", "timeout": 5, "async": true }] }
     ],
     "Notification": [
       { "matcher": "idle_prompt|permission_prompt|agent_needs_input",
-        "hooks": [{ "type": "command", "command": "mindskein hook notification", "timeout": 5 }] }
+        "hooks": [{ "type": "command", "command": "/absolute/path/to/mindskein hook notification", "timeout": 5, "async": true }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "mindskein hook stop", "timeout": 5 }] }
+      { "hooks": [{ "type": "command", "command": "/absolute/path/to/mindskein hook stop", "timeout": 5, "async": true }] }
     ],
     "SessionEnd": [
       { "matcher": "clear|resume|logout|prompt_input_exit|other",
-        "hooks": [{ "type": "command", "command": "mindskein hook session-end", "timeout": 5 }] }
+        "hooks": [{ "type": "command", "command": "/absolute/path/to/mindskein hook session-end", "timeout": 5, "async": true }] }
     ]
   }
 }
 ```
 
-Hooks reload without restarting Claude Code. Open a session, run a tool, then
-`mindskein status` — it should be listed. If it is empty, the hook shell
-probably cannot find `mindskein` on its `PATH`; use the absolute path from
-`which mindskein` instead.
+The path is absolute because a hook runs with no `PATH` guarantee. `async`
+keeps the hook out of the critical path of the event. Keep the `timeout` —
+leaving it out does not mean "no timeout", it means the Claude Code default,
+which is far longer than anything this should ever need.
 
-Keep the `timeout`. Leaving it out does not mean "no timeout" — it means the
-Claude Code default, which is far longer than anything this should ever need.
+</details>
 
 ## Use
 
@@ -114,6 +135,8 @@ Claude Code default, which is far longer than anything this should ever need.
 mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the plan only
+mindskein prune         # delete state past the retention horizon
+mindskein init          # register the hooks; --uninstall removes them
 ```
 
 `--all` widens every section: the `!3` backlog, sessions that have ended or
@@ -169,18 +192,17 @@ real captured data, a public repo, green CI — is met.
 **The sharp edges below are a separate list.** None of them block that
 definition. They are what to weigh before registering four global hooks:
 
-- **A hook crash can disturb the session it is watching.** The hooks are
-  registered synchronously and there is no panic guard yet, and a Go binary
-  exits `2` on an unrecovered panic — which `PreToolUse` reads as *block this
-  tool call*. Fixing this is the next thing on the list, and it lands before
-  any release that asks other people to install it.
-- **Nothing is ever deleted.** `Stop` writes a handoff every turn and no record
-  is ever pruned, so `~/.mindskein/` only grows. `status` hides what is stale
-  or ended; it does not remove it.
-- **Setup and removal are manual.** There is no `mindskein init` and no
-  uninstall, so both steps above are hand-edited files. Uninstalling the binary
-  without un-registering the hooks leaves them pointing at a command that no
-  longer exists.
+- **A runtime fatal error still exits 2.** A panic is recovered, logged to
+  `~/.mindskein/hooks.log`, and the hook exits `0` — `PreToolUse` reads an exit
+  of `2` as *block this tool call*, so that path is closed. But a Go runtime
+  fatal (a concurrent map write, a stack overflow) bypasses `recover` and still
+  exits `2`. Those are bugs to prevent rather than absorb; there is no guard
+  that can catch them.
+- **Old state is deleted on a timer, and deletion is permanent.** `prune` drops
+  session records after 30 days and handoffs after 90, and a sweep runs once a
+  day from the `Stop` hook. Set `sessions`/`handoffs` to `0` under
+  `[retention]` to keep everything forever. `mindskein prune --dry-run` shows
+  what would go.
 - **A session that dies hard keeps its last status for a while.** No hook fires
   when a terminal is killed, so the record simply stops changing. After 72
   hours the row is marked `running (stale)` and stops counting toward the

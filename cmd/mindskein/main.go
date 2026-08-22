@@ -18,8 +18,10 @@ import (
 	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/handoff"
 	"github.com/swilgosz/mindskein/internal/hook"
+	"github.com/swilgosz/mindskein/internal/install"
 	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
+	"github.com/swilgosz/mindskein/internal/text"
 )
 
 // version is overridden at build time with
@@ -79,7 +81,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
-		{"hook", "handle a Claude Code hook payload on stdin", cmdHook},
+		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
+			return cmdInit(args, stdout, stderr)
+		}},
+		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
+			return cmdPrune(args, stdout, stderr)
+		}},
+		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
+			return cmdHook(args, stdin, stderr)
+		}},
 		{"version", "print the mindskein version", func([]string, io.Reader) error {
 			fmt.Fprintln(stdout, buildVersion())
 			return nil
@@ -323,7 +333,7 @@ func labelsFrom(handoffs []*handoff.Handoff) map[string]string {
 // session. Only a misconfigured invocation (missing or unknown event name) is
 // reported as an error, because that one is a typo in settings.json and
 // nothing will ever be recorded until it is fixed.
-func cmdHook(args []string, stdin io.Reader) error {
+func cmdHook(args []string, stdin io.Reader, stderr io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("hook: expected one of %v", hook.Events)
 	}
@@ -331,10 +341,47 @@ func cmdHook(args []string, stdin io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("hook: %w", err)
 	}
-	if err := handleHook(event, stdin); err != nil {
-		logHookFailure(event, err)
+	if err := safely(func() error { return hookRunner(event, stdin) }); err != nil {
+		logHookFailure(event, err, stderr)
 	}
 	return nil
+}
+
+// hookRunner is the body of a hook, indirected so a test can substitute one
+// that panics. The property being protected is the process exit status, and
+// nothing short of a real panic in a real process demonstrates it.
+var hookRunner = handleHook
+
+// safely runs fn and turns a panic into an ordinary error.
+//
+// Without this the panic reaches the runtime, which exits 2 — the one status
+// PreToolUse reads as "block this tool call". A crash in the observer would
+// stop the work it was only supposed to watch, and the user would see a
+// blocked tool with no explanation anywhere.
+//
+// It cannot catch a runtime fatal error: a concurrent map write or a stack
+// overflow bypasses recover and still exits 2. Those are bugs to prevent
+// rather than absorb.
+func safely(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v | %s", r, oneLineStack())
+		}
+	}()
+	return fn()
+}
+
+// maxStack caps the flattened stack. The log is read a line at a time, so the
+// frames that matter are the first few; the rest is the test harness or the
+// runtime.
+const maxStack = 2000
+
+func oneLineStack() string {
+	stack := text.OneLine(string(debug.Stack()))
+	if len(stack) > maxStack {
+		stack = stack[:maxStack] + " ..."
+	}
+	return stack
 }
 
 func handleHook(event hook.Event, stdin io.Reader) error {
@@ -357,7 +404,16 @@ func handleHook(event hook.Event, stdin io.Reader) error {
 	if event != hook.EventStop {
 		return nil
 	}
-	return recordHandoff(sess, payload, now)
+	if err := recordHandoff(sess, payload, now); err != nil {
+		return err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		// A broken config must not stop the sweep from running on defaults,
+		// the same way it does not stop the brief from printing.
+		cfg = config.Defaults()
+	}
+	return pruneDaily(cfg, now)
 }
 
 // recordHandoff writes the session handoff once a turn completes.
@@ -377,21 +433,213 @@ func recordHandoff(sess *session.Session, payload *hook.Payload, now time.Time) 
 	return err
 }
 
-// logHookFailure appends one line to ~/.mindskein/hooks.log. Every failure
-// path here is itself ignored: if mindskein cannot even log, the hook still
-// must not disturb the session.
-func logHookFailure(event hook.Event, cause error) {
+// logHookFailure appends one line to ~/.mindskein/hooks.log.
+//
+// When even that fails — an unwritable state directory is the case that
+// matters — it says so on stderr instead. A hook exits 0 either way, and a
+// hook that both does nothing and reports nothing is indistinguishable from
+// one that works.
+func logHookFailure(event hook.Event, cause error, stderr io.Writer) {
+	line := fmt.Sprintf("%s\t%s\t%v\n", time.Now().UTC().Format(time.RFC3339), event, cause)
+	if err := appendHookLog(line); err != nil {
+		fmt.Fprintf(stderr, "mindskein: %s hook failed: %v (and could not write the log: %v)\n", event, cause, err)
+	}
+}
+
+func appendHookLog(line string) error {
 	home, err := session.Home()
 	if err != nil {
-		return
+		return err
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(filepath.Join(home, "hooks.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\t%s\t%v\n", time.Now().UTC().Format(time.RFC3339), event, cause)
+	_, err = io.WriteString(f, line)
+	return err
+}
+
+// cmdPrune deletes state past the retention horizons.
+//
+// It is the only command that removes anything, so it says what rule it
+// applied and offers --dry-run to answer the question without acting on it.
+func cmdPrune(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dryRun := fs.Bool("dry-run", false, "report what would be removed without removing it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "mindskein: %v\n", err)
+	}
+	res, err := prune(cfg, time.Now().UTC(), *dryRun)
+	for _, r := range res {
+		fmt.Fprintln(stdout, r.Summary())
+	}
+	return err
+}
+
+// prune sweeps both stores and returns one result per store. A failure on one
+// does not stop the other: they are independent directories, and a permission
+// problem on handoffs is no reason to leave session records uncollected.
+func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResult, error) {
+	var results []*session.PruneResult
+	var firstErr error
+
+	if store, err := session.DefaultStore(); err != nil {
+		firstErr = err
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Sessions), dryRun); err != nil {
+		firstErr = err
+	} else {
+		results = append(results, res)
+	}
+
+	if store, err := handoff.DefaultStore(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Handoffs), dryRun); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		results = append(results, res)
+	}
+
+	// Both are returned. Whatever was collected is worth reporting, and the
+	// failure is still a failure: swallowing it because the other store
+	// happened to succeed would let a directory quietly stop being pruned.
+	return results, firstErr
+}
+
+// pruneStamp is the file recording the last sweep. Without it the hook would
+// walk both directories on every turn.
+const pruneStamp = "last-prune"
+
+// pruneDaily sweeps at most once a day, from the Stop hook.
+//
+// Stop is the right place: it already pays for a transcript read, so one extra
+// stat is nothing, and unlike SessionEnd it cannot be missed by a process that
+// dies hard. PreToolUse would be the wrong place — it runs on every single
+// tool call and must stay out of the way.
+//
+// Errors are returned to the caller, which logs and swallows them. Collecting
+// old files is never worth disturbing a live session over.
+func pruneDaily(cfg config.Config, now time.Time) error {
+	home, err := session.Home()
+	if err != nil {
+		return err
+	}
+	stamp := filepath.Join(home, pruneStamp)
+	if info, err := os.Stat(stamp); err == nil && now.Sub(info.ModTime()) < 24*time.Hour {
+		return nil
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	// Stamp first. If the sweep fails, the next attempt is tomorrow rather
+	// than on every turn for the rest of the day.
+	if err := os.WriteFile(stamp, []byte(now.Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		return err
+	}
+	_, err = prune(cfg, now, false)
+	return err
+}
+
+// defaultTimeout is the per-hook limit written into settings.json. Every hook
+// here does a little file IO and, once a day, a directory sweep; five seconds
+// is generous for that and short enough to bound a pathological case.
+const defaultTimeout = 5
+
+// cmdInit registers the hooks in Claude Code's settings.json, or removes them.
+//
+// It exists because the alternative is asking someone to hand-edit the file
+// that controls their whole setup, and because deleting the binary without an
+// uninstall leaves four hooks pointing at a command that is no longer there.
+func cmdInit(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	uninstall := fs.Bool("uninstall", false, "remove mindskein's hooks instead of installing them")
+	dryRun := fs.Bool("dry-run", false, "report what would change without changing it")
+	settings := fs.String("settings", "", "path to settings.json (default ~/.claude/settings.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	path := *settings
+	if path == "" {
+		var err error
+		if path, err = defaultSettingsPath(); err != nil {
+			return err
+		}
+	}
+
+	if *uninstall {
+		rep, err := install.Unregister(path, *dryRun)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, rep)
+		fmt.Fprintln(stdout, "state in ~/.mindskein was left in place; remove it by hand if you want it gone")
+		return nil
+	}
+
+	binary, err := binaryPath()
+	if err != nil {
+		return err
+	}
+	rep, err := install.Register(path, install.Options{
+		Binary:  binary,
+		Timeout: defaultTimeout,
+		Async:   true,
+	}, *dryRun)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, rep)
+
+	if !*dryRun {
+		created, err := install.EnsureConfig(configFile())
+		if err != nil {
+			return err
+		}
+		if created {
+			fmt.Fprintf(stdout, "wrote a starter config at %s\n", configFile())
+		}
+	}
+	fmt.Fprintln(stdout, "restart Claude Code for the hooks to take effect")
+	return nil
+}
+
+func defaultSettingsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude", "settings.json"), nil
+}
+
+// binaryPath is the absolute path to this executable, with symlinks resolved.
+//
+// A hook runs with no PATH guarantee, so the command has to be absolute. The
+// symlink is resolved because a Homebrew install puts the real binary in the
+// Cellar and links it into the prefix; recording the link would break the
+// hooks on the next upgrade.
+func binaryPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locating the mindskein binary: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return exe, nil
+	}
+	return resolved, nil
 }

@@ -25,6 +25,11 @@ const (
 	// maxIDLen bounds the session id so it can never exceed a filesystem's
 	// name limit. Claude Code ids are UUIDs; this is pure defence.
 	maxIDLen = 128
+
+	// fileExt and lockExt name the two files a session leaves on disk. Prune
+	// decides what it owns by these, so they are spelled once.
+	fileExt = ".json"
+	lockExt = ".lock"
 )
 
 // ErrInvalidID is returned for a session id that cannot safely become a
@@ -79,7 +84,7 @@ func safeID(id string) (string, error) {
 // lockPath is the file whose advisory lock serialises writers of one session.
 // List skips it: the extension is not .json.
 func (s *Store) lockPath(id string) string {
-	return filepath.Join(s.Dir, id+".lock")
+	return filepath.Join(s.Dir, id+lockExt)
 }
 
 // Path is the file backing a session id.
@@ -88,7 +93,7 @@ func (s *Store) Path(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(s.Dir, safe+".json"), nil
+	return filepath.Join(s.Dir, safe+fileExt), nil
 }
 
 // Load reads one session. A missing file returns an error wrapping
@@ -230,7 +235,7 @@ func (s *Store) List() ([]*Session, error) {
 	var sessions []*Session
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || strings.HasPrefix(name, ".") || filepath.Ext(name) != ".json" {
+		if e.IsDir() || strings.HasPrefix(name, ".") || filepath.Ext(name) != fileExt {
 			continue
 		}
 		sess, err := loadFile(filepath.Join(s.Dir, name))
