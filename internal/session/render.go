@@ -14,6 +14,15 @@ import (
 // could not be produced.
 const Heading = "LIVE SESSIONS"
 
+// finished are the states that mean the session is over and can be folded away
+// by default. Interrupted is deliberately absent: it ended without reporting
+// it, which is the opposite of finished business.
+var finished = map[State]bool{
+	StateEnded:      true,
+	StateSuperseded: true,
+	StateClosed:     true,
+}
+
 const (
 	maxLabelWidth   = 30
 	maxProjectWidth = 22
@@ -44,6 +53,11 @@ type RenderOptions struct {
 	// one, which is why it is measured in days and configured rather than
 	// guessed here.
 	HideAfter time.Duration
+
+	// Probe establishes whether the process behind a record is still there.
+	// The zero value cannot tell, and a session is then reported from what it
+	// last said rather than from a guess about what it is doing now.
+	Probe Probe
 }
 
 // Render writes the LIVE SESSIONS block: the whole of `mindskein status`, and
@@ -64,14 +78,19 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 
 	type row struct{ id, label, project, status, age, event string }
 	rows := make([]row, 0, len(sessions))
-	running, ended, old := 0, 0, 0
+	running, ended, old, interrupted := 0, 0, 0, 0
 
 	for _, s := range sessions {
 		// A session past the horizon that also ended counts as ended: that is
 		// the reported fact, and counting it twice would overstate the total.
+		state := s.Reported(now, opts.Probe)
+
+		// An interrupted session is never hidden for being finished, because
+		// it is the one thing here that is not finished: it stopped without
+		// saying so, and it is the reason this block is read at all.
 		hide := true
 		switch {
-		case s.Ended():
+		case finished[state]:
 			ended++
 		case s.Older(now, opts.HideAfter):
 			old++
@@ -82,19 +101,15 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 			continue
 		}
 
-		status := string(s.Status)
-		if s.Ended() && s.EndReason != "" {
+		status := string(state)
+		if state == StateEnded && s.EndReason != "" {
 			status += " (" + s.EndReason + ")"
-		} else if s.Stale(now) {
-			// A hard-killed process never reports its ending, so this status
-			// may simply be lying. Say so rather than imply the session is
-			// still sitting there.
-			status += " (stale)"
 		}
-		// A stale status may simply be lying, so it cannot be counted as
-		// running: the summary would then contradict the row above it.
-		if s.Status == StatusRunning && !s.Stale(now) {
+		switch state {
+		case StateRunning:
 			running++
+		case StateInterrupted:
+			interrupted++
 		}
 
 		project := s.ProjectName()
@@ -147,6 +162,12 @@ func Render(w io.Writer, sessions []*Session, now time.Time, opts RenderOptions)
 	}
 
 	summary := fmt.Sprintf("\n  %s · %d running", plural(len(rows), "session"), running)
+	if interrupted > 0 {
+		// Named in the summary, not just in a row: a session that stopped
+		// without saying so is the one line here worth acting on, and it
+		// should not have to be spotted by scanning a column.
+		summary += fmt.Sprintf(" · %d interrupted", interrupted)
+	}
 	if hidden != "" && !opts.ShowAll {
 		summary += fmt.Sprintf(" · %s hidden (--all)", hidden)
 	}

@@ -459,13 +459,34 @@ func TestStatusRetentionHorizon(t *testing.T) {
 	})
 
 	t.Run("keeps every session when the horizon is zero", func(t *testing.T) {
+		// Three days, not a hundred: a record older than the machine's boot
+		// is folded away for a different and correct reason, and staging one
+		// here would test that instead of the age horizon.
 		home := t.TempDir()
 		t.Setenv("MINDSKEIN_HOME", home)
-		writeSession(t, home, "aaaa1111", 100*24*time.Hour)
+		writeSession(t, home, "aaaa1111", 3*24*time.Hour)
 
 		out, _ := status(t, "--hide-after=0")
 		if !strings.Contains(out, "aaaa1111") {
 			t.Errorf("a zero horizon must hide nothing:\n%s", out)
+		}
+	})
+
+	t.Run("folds away a record that predates the boot, horizon or not", func(t *testing.T) {
+		// Nothing survives a reboot, so this is not a session that might
+		// still be there — it is finished business, and turning the age
+		// horizon off is not a reason to claim otherwise.
+		home := t.TempDir()
+		t.Setenv("MINDSKEIN_HOME", home)
+		writeSession(t, home, "bbbb2222", 100*24*time.Hour)
+
+		out, _ := status(t, "--hide-after=0")
+		if strings.Contains(out, "bbbb2222") {
+			t.Errorf("a session from before the last boot was reported as open:\n%s", out)
+		}
+		all, _ := status(t, "--hide-after=0", "--all")
+		if !strings.Contains(all, "bbbb2222") {
+			t.Errorf("--all must still show it:\n%s", all)
 		}
 	})
 

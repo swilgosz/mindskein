@@ -39,18 +39,25 @@ const AgentClaudeCode = "claude-code"
 // went quiet and the longest came after 48; a shorter horizon marks ordinary
 // overnight work as untrustworthy. This only ever marks a session now — what
 // gets hidden is decided by StatusEnded, which is known rather than inferred.
-const StaleAfter = 72 * time.Hour
+const StaleAfter = 8 * time.Hour
 
 // Session is the on-disk record: one JSON file per session id.
 type Session struct {
-	ID          string    `json:"id"`
-	Agent       string    `json:"agent"`
-	ProjectPath string    `json:"project_path"`
-	PID         int       `json:"pid"`
-	Status      Status    `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	LastEventAt time.Time `json:"last_event_at"`
-	LastEvent   string    `json:"last_event"`
+	ID          string `json:"id"`
+	Agent       string `json:"agent"`
+	ProjectPath string `json:"project_path"`
+	PID         int    `json:"pid"`
+
+	// PIDStartedAt is when that process started. A pid is not an identity:
+	// the kernel reuses it, and /clear mints a new session id inside the same
+	// process. Without this, liveness alone reports every recycled pid as a
+	// running session. Zero on records written before this field existed,
+	// which is read as "cannot tell" rather than "dead".
+	PIDStartedAt time.Time `json:"pid_started_at,omitempty"`
+	Status       Status    `json:"status"`
+	StartedAt    time.Time `json:"started_at"`
+	LastEventAt  time.Time `json:"last_event_at"`
+	LastEvent    string    `json:"last_event"`
 
 	// EndReason is why the session finished: clear, resume, logout,
 	// prompt_input_exit or other. Empty until it ends.
@@ -60,6 +67,9 @@ type Session struct {
 // Stale reports whether the session has been silent long enough that its
 // status is no longer meaningful. An ended session is never stale: its status
 // is a fact and does not decay.
+//
+// This is now only a fallback. Where the process can be looked up, liveness is
+// established rather than inferred from silence — see Reported.
 func (s *Session) Stale(now time.Time) bool {
 	if s.Status == StatusEnded {
 		return false

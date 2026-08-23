@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/swilgosz/mindskein/internal/proc"
 	"github.com/swilgosz/mindskein/internal/session"
 )
 
@@ -94,6 +95,35 @@ func Parse(r io.Reader) (*Payload, error) {
 	return &p, nil
 }
 
+// stampProcess records the pid and, once, when that process started.
+//
+// The start time is what tells a pid from the process that later inherits it,
+// and it is read from the kernel — so it is read only when the pid actually
+// changes. PreToolUse runs on every tool call, and a syscall paid on all of
+// them to learn something that cannot change within a session would be a
+// syscall wasted.
+func stampProcess(s *session.Session, pid int) {
+	if s.PID == pid && !s.PIDStartedAt.IsZero() {
+		return
+	}
+	s.PID = pid
+	started, err := proc.StartTime(pid)
+	if err != nil {
+		// Unsupported platform, or the process is already gone. Leaving this
+		// zero is read as "cannot tell", which is the truth.
+		s.PIDStartedAt = time.Time{}
+		return
+	}
+	s.PIDStartedAt = started
+}
+
+func orKeep(next, current string) string {
+	if next == "" {
+		return current
+	}
+	return next
+}
+
 // waitingNotifications are the notification_type values that mean the session
 // has stopped and is blocked on a human. Claude emits these explicitly, so
 // there is nothing to infer. Every other notification type (auth_success, the
@@ -160,9 +190,7 @@ func Handle(store *session.Store, ev Event, p *Payload, now time.Time, pid int) 
 		}
 		s.Status = status
 		s.LastEvent = lastEvent
-		s.PID = pid
-		if p.CWD != "" {
-			s.ProjectPath = p.CWD
-		}
+		s.ProjectPath = orKeep(p.CWD, s.ProjectPath)
+		stampProcess(s, pid)
 	})
 }

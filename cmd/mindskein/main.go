@@ -267,6 +267,7 @@ func renderSessions(w io.Writer, labels map[string]string, all bool, hideAfter t
 		Labels:    labels,
 		ShowAll:   all,
 		HideAfter: hideAfter,
+		Probe:     session.SystemProbe(),
 	})
 }
 

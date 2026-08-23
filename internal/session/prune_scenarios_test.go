@@ -239,3 +239,57 @@ func TestPruneRemovesRecordsPastTheHorizon(t *testing.T) {
 		}
 	})
 }
+
+// TestPruneNeverDeletesALiveSession restores a guarantee dropped when the unit
+// was first built. It was dropped for a stated reason — that the pid belonged
+// to the shell and was recycled — and that reason turned out to be wrong: the
+// pid is the claude process, and the start time beside it tells that process
+// from whatever later inherits the number.
+func TestPruneNeverDeletesALiveSession(t *testing.T) {
+	// A session open for months needs a machine that has been up for longer.
+	// Staging it against a more recent boot would be a contradiction: nothing
+	// survives a reboot, and the record would rightly read as interrupted.
+	longUptime := staged(at.Add(-200*24*time.Hour), true, nil)
+
+	t.Run("an ancient but running session survives", func(t *testing.T) {
+		store := testStore(t)
+		seed(t, store, "live0001", StatusRunning, 90*24*time.Hour)
+		res, err := store.prune(at, month, false, longUptime)
+		if err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+		if len(res.Removed) != 0 {
+			t.Errorf("Removed = %v; a session open for months is open, not stale", res.Removed)
+		}
+		path, _ := store.Path("live0001")
+		if _, err := os.Stat(path); err != nil {
+			t.Error("a running session was deleted")
+		}
+	})
+
+	t.Run("an ancient dead session is still collected", func(t *testing.T) {
+		store := testStore(t)
+		seed(t, store, "dead0001", StatusRunning, 90*24*time.Hour)
+		res, err := store.prune(at, month, false, deadProbe)
+		if err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+		if len(res.Removed) != 1 {
+			t.Errorf("Removed = %v, want the dead record collected", res.Removed)
+		}
+	})
+
+	t.Run("liveness does not override the horizon for a recent record", func(t *testing.T) {
+		// The check only ever keeps records. It must not become a second way
+		// to delete one.
+		store := testStore(t)
+		seed(t, store, "new00001", StatusRunning, time.Hour)
+		res, err := store.prune(at, month, false, deadProbe)
+		if err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+		if len(res.Removed) != 0 {
+			t.Errorf("Removed = %v, want nothing inside the horizon", res.Removed)
+		}
+	})
+}
