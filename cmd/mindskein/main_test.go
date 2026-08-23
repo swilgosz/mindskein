@@ -376,13 +376,20 @@ func TestEndedSessionSurvivesALateStop(t *testing.T) {
 // field the retention horizon reads.
 func writeSession(t *testing.T, home, id string, silent time.Duration) {
 	t.Helper()
+	writeSessionWithPID(t, home, id, silent, 0)
+}
+
+// writeSessionWithPID stages a record that names a process. The boot-time rule
+// only refutes a pid, so a fixture without one is never folded away by it.
+func writeSessionWithPID(t *testing.T, home, id string, silent time.Duration, pid int) {
+	t.Helper()
 	dir := filepath.Join(home, "sessions")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	sess := session.Session{
 		ID: id, Agent: session.AgentClaudeCode, ProjectPath: "/Users/seb/Projects/mindskein",
-		Status: session.StatusWaiting, LastEvent: "idle_prompt",
+		Status: session.StatusWaiting, LastEvent: "idle_prompt", PID: pid,
 		StartedAt: time.Now().UTC().Add(-silent), LastEventAt: time.Now().UTC().Add(-silent),
 	}
 	data, err := json.Marshal(sess)
@@ -478,7 +485,7 @@ func TestStatusRetentionHorizon(t *testing.T) {
 		// horizon off is not a reason to claim otherwise.
 		home := t.TempDir()
 		t.Setenv("MINDSKEIN_HOME", home)
-		writeSession(t, home, "bbbb2222", 100*24*time.Hour)
+		writeSessionWithPID(t, home, "bbbb2222", 100*24*time.Hour, 999999)
 
 		out, _ := status(t, "--hide-after=0")
 		if strings.Contains(out, "bbbb2222") {

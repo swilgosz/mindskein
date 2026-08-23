@@ -105,6 +105,15 @@ func (s *Session) active() State {
 }
 
 func (s *Session) liveness(now time.Time, p Probe) liveness {
+	// Every check below is about a process this record names. Without a pid it
+	// names none, so there is nothing to confirm and nothing to refute —
+	// calling that "gone" would be inventing a process in order to declare it
+	// dead. The horizon decides instead.
+	if s.PID <= 0 {
+		return livenessUnknown
+	}
+	// Nothing that was running before the machine came up is running now, and
+	// that settles it without looking up any process.
 	if p.Boot != nil {
 		if boot, err := p.Boot(); err == nil && !boot.IsZero() && s.LastEventAt.Before(boot) {
 			return livenessGone

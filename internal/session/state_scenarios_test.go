@@ -172,10 +172,31 @@ func TestReportedStateWhenLivenessCannotBeDetermined(t *testing.T) {
 	t.Run("a record with no stored start time is not called dead", func(t *testing.T) {
 		// Every record written before this field existed. Reporting them as
 		// interrupted would invent lost work on upgrade.
+		//
+		// The real kernel answers the pid here, but the boot time is staged:
+		// with SystemProbe the fixed clock this suite uses would sit before
+		// the boot of whatever machine runs it, and the test would pass or
+		// fail on the uptime of the runner rather than on the behaviour.
+		probe := Probe{
+			Boot:        func() (time.Time, error) { return at.Add(-365 * 24 * time.Hour), nil },
+			SameProcess: proc.SameProcess,
+		}
 		s := record(StatusRunning, "Bash", time.Minute)
 		s.PIDStartedAt = time.Time{}
-		if got := s.Reported(at, SystemProbe()); got != StateRunning {
+		if got := s.Reported(at, probe); got != StateRunning {
 			t.Errorf("Reported = %q, want %q for a record predating the guard", got, StateRunning)
+		}
+	})
+
+	t.Run("a record with no pid at all is not called dead either", func(t *testing.T) {
+		// The boot time refutes a pid. Without one there is nothing to
+		// refute, so the horizon decides and nothing is invented.
+		s := record(StatusRunning, "Bash", time.Minute)
+		s.PID = 0
+		s.PIDStartedAt = time.Time{}
+		recentBoot := staged(at.Add(-time.Minute), false, proc.ErrNotRunning)
+		if got := s.Reported(at, recentBoot); got != StateRunning {
+			t.Errorf("Reported = %q, want %q", got, StateRunning)
 		}
 	})
 

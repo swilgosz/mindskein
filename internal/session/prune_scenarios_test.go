@@ -19,6 +19,10 @@ func seed(t *testing.T, store *Store, id string, status Status, silent time.Dura
 		s.ProjectPath = "/tmp/x"
 		s.Status = status
 		s.LastEvent = "Stop"
+		// A pid no process can hold, so a prune consulting the real kernel
+		// gets the same answer on every machine.
+		s.PID = 999999
+		s.PIDStartedAt = at.Add(-silent - time.Hour)
 	})
 	if err != nil {
 		t.Fatalf("seeding %s: %v", id, err)

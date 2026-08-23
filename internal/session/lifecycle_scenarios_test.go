@@ -55,7 +55,8 @@ func TestStatusHidesFinishedNotPaused(t *testing.T) {
 	overnight := 14 * time.Hour
 
 	paused := &Session{ID: "aaaa1111", ProjectPath: "/Users/seb/Projects/mindskein",
-		Status: StatusWaiting, LastEvent: "idle_prompt", LastEventAt: at.Add(-overnight)}
+		Status: StatusWaiting, LastEvent: "idle_prompt", LastEventAt: at.Add(-overnight),
+		PID: 4242, PIDStartedAt: at.Add(-24 * time.Hour)}
 	finished := ended("bbbb2222", "/Users/seb/Projects/old", "logout", 2*time.Hour)
 
 	t.Run("hides ended sessions by default", func(t *testing.T) {
