@@ -167,7 +167,9 @@ several folders and sessions. It is the only grouping key that does.
   hooks.log         appended to only when a hook fails
 ```
 
-**Everything stays on your machine.** Nothing is uploaded, and the tool makes no network calls at all.
+**Nothing leaves your machine.** No uploads, no telemetry, no account, no third-party service. The store above is all of it, and it is yours to delete.
+
+Today the binary makes no network calls at all, because everything it reads is a local file. That is a fact about this version, not the boundary. **Pulling your work in from the tools it already lives in — a tracker, a code host, a to-do app — is the point of this thing**, and when those adapters land they are outbound reads only, to hosts you name, with credentials that stay on disk here. Fetching your own data in is not the same as sending it out, and sending it out is what this promises never to do.
 
 Be aware of what a handoff holds: **the last message you typed**, verbatim, up to 1500 characters. That is the point — it is what answers "where did we leave off" — but it means anything you paste into a session can land in `~/.mindskein/handoffs/`. The directory is created `0700` and the files `0600`.
 
