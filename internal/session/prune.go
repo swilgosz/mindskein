@@ -60,11 +60,17 @@ func ShortDuration(d time.Duration) string {
 //
 // A zero horizon prunes nothing: retention off must mean off, not immediate.
 //
-// Liveness is not consulted. The PID on a record belongs to the shell that ran
-// the hook rather than to Claude, and it is recycled within days — a month
-// later, checking it would preserve records at random. Age is the only signal
-// left that still means something, which is why the horizon is set so far out.
+// A session whose process is still running is never deleted, whatever its age.
+// An earlier version of this skipped the check on the belief that the stored
+// pid belonged to the shell that ran the hook; it does not — it is the claude
+// process itself, and the start time stored beside it tells that process from
+// whatever later inherits the number. Age alone would eventually collect a
+// session that had merely been open a long time.
 func (s *Store) Prune(now time.Time, horizon time.Duration, dryRun bool) (*PruneResult, error) {
+	return s.prune(now, horizon, dryRun, SystemProbe())
+}
+
+func (s *Store) prune(now time.Time, horizon time.Duration, dryRun bool, probe Probe) (*PruneResult, error) {
 	res := &PruneResult{Horizon: horizon, DryRun: dryRun}
 	if horizon <= 0 {
 		return res, nil
@@ -83,7 +89,7 @@ func (s *Store) Prune(now time.Time, horizon time.Duration, dryRun bool) (*Prune
 			continue
 		}
 		path := filepath.Join(s.Dir, e.Name())
-		if !s.expired(path, id, now, horizon) {
+		if !s.expired(path, id, now, horizon) || s.alive(path, now, probe) {
 			res.Kept++
 			continue
 		}
@@ -129,6 +135,21 @@ func (s *Store) expired(path, id string, now time.Time, horizon time.Duration) b
 		return false
 	}
 	return now.Sub(info.ModTime()) > horizon
+}
+
+// alive reports whether the record belongs to a process that is still running.
+// A record that will not parse has no pid to check and is left to the horizon.
+func (s *Store) alive(path string, now time.Time, probe Probe) bool {
+	sess, err := loadFile(path)
+	if err != nil {
+		return false
+	}
+	switch sess.Reported(now, probe) {
+	case StateRunning, StateWaiting:
+		return true
+	default:
+		return false
+	}
 }
 
 // remove deletes a record and its lock, holding the lock while it does so a

@@ -46,7 +46,7 @@ func TestRenderColumnsAlign(t *testing.T) {
 	}
 
 	// The two rows must line up: same column offsets for status.
-	if strings.Index(lines[1], "running") != strings.Index(lines[2], "done") {
+	if strings.Index(lines[1], "running") != strings.Index(lines[2], "waiting") {
 		t.Errorf("status column not aligned:\n%s\n%s", lines[1], lines[2])
 	}
 	if !strings.Contains(lines[1], "912d5686") || !strings.Contains(lines[1], "62. Business") {
@@ -65,26 +65,28 @@ func TestRenderColumnsAlign(t *testing.T) {
 
 // TestRenderMarksStale covers the gap left by there being no session-end hook:
 // a killed terminal leaves its last status behind forever.
-func TestRenderMarksStale(t *testing.T) {
-	now := time.Date(2026, 8, 17, 23, 10, 0, 0, time.UTC)
+func TestRenderSaysUnknownWhenLivenessCannotBeEstablished(t *testing.T) {
+	// Silence past the horizon used to be reported as the last status with
+	// "(stale)" appended, which still asserted a status while admitting it
+	// might be false. With no way to look up the process, the honest answer
+	// is that we do not know.
+	now := time.Date(2026, 8, 19, 9, 0, 0, 0, time.UTC)
 	sessions := []*Session{{
-		ID: "dead0001", ProjectPath: "/Users/seb/Projects/old",
-		Status: StatusRunning, LastEvent: "Bash",
-		LastEventAt: now.Add(-StaleAfter - time.Hour),
+		ID: "dead0001", ProjectPath: "/tmp/old", Status: StatusRunning,
+		LastEvent: "Bash", LastEventAt: now.Add(-StaleAfter - time.Hour),
 	}}
 
 	var out bytes.Buffer
-	if err := Render(&out, sessions, now, RenderOptions{ShowAll: true}); err != nil {
+	if err := Render(&out, sessions, now, RenderOptions{}); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
-	got := out.String()
-	if !strings.Contains(got, "stale") {
-		t.Errorf("a session past StaleAfter should be marked stale:\n%s", got)
+	if !strings.Contains(out.String(), string(StateUnknown)) {
+		t.Errorf("want %q for a session whose process cannot be checked:\n%s", StateUnknown, out.String())
 	}
-	// A stale status may be lying, so it must not be counted as running — with
-	// StatusWaiting here this assertion passed whatever the counter did.
-	if !strings.Contains(got, "0 running") {
-		t.Errorf("stale session counted as running:\n%s", got)
+	// The row only: the summary legitimately says "0 running".
+	row := strings.Split(out.String(), "\n")[1]
+	if strings.Contains(row, "running") {
+		t.Errorf("a status that cannot be confirmed is still being asserted:\n%s", row)
 	}
 }
 

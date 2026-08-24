@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -228,5 +229,60 @@ func TestHandleRejectsUnsafeSessionID(t *testing.T) {
 	_, err := Handle(store, EventPreToolUse, &Payload{SessionID: "../../escape"}, time.Now(), 1)
 	if err == nil {
 		t.Error("Handle() with a traversing session_id = nil, want an error")
+	}
+}
+
+// TestStampProcessReadsTheKernelOnlyWhenThePidChanges holds the budget rule
+// the unit was approved against. PreToolUse runs on every tool call, and the
+// start time of a live process cannot change, so paying a syscall on every
+// call would buy nothing.
+func TestStampProcessReadsTheKernelOnlyWhenThePidChanges(t *testing.T) {
+	t.Run("stamps a start time the first time", func(t *testing.T) {
+		s := &session.Session{}
+		stampProcess(s, os.Getpid())
+		if s.PID != os.Getpid() {
+			t.Errorf("PID = %d, want %d", s.PID, os.Getpid())
+		}
+		if s.PIDStartedAt.IsZero() {
+			t.Error("no start time captured, so liveness can never be established for this record")
+		}
+	})
+
+	t.Run("leaves an existing stamp alone", func(t *testing.T) {
+		stamped := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		s := &session.Session{PID: os.Getpid(), PIDStartedAt: stamped}
+		stampProcess(s, os.Getpid())
+		if !s.PIDStartedAt.Equal(stamped) {
+			t.Errorf("start time was re-read on an unchanged pid: %s", s.PIDStartedAt)
+		}
+	})
+
+	t.Run("re-reads when the pid changes", func(t *testing.T) {
+		stamped := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		s := &session.Session{PID: 1, PIDStartedAt: stamped}
+		stampProcess(s, os.Getpid())
+		if s.PIDStartedAt.Equal(stamped) {
+			t.Error("a new pid kept the old process's start time, which would compare against the wrong process")
+		}
+	})
+
+	t.Run("a pid that cannot be read leaves no stamp rather than a wrong one", func(t *testing.T) {
+		s := &session.Session{}
+		stampProcess(s, -1)
+		if !s.PIDStartedAt.IsZero() {
+			t.Errorf("PIDStartedAt = %s for an unreadable pid, want zero", s.PIDStartedAt)
+		}
+	})
+}
+
+func TestProjectPathSurvivesAPayloadWithoutOne(t *testing.T) {
+	// SessionEnd payloads have carried an empty cwd. Overwriting the stored
+	// path with it would leave the brief naming no project for exactly the
+	// sessions that just finished.
+	if got := orKeep("", "/Users/me/Projects/api"); got != "/Users/me/Projects/api" {
+		t.Errorf("orKeep dropped the stored path: %q", got)
+	}
+	if got := orKeep("/new", "/old"); got != "/new" {
+		t.Errorf("orKeep = %q, want the new path", got)
 	}
 }
