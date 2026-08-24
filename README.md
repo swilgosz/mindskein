@@ -79,9 +79,8 @@ an empty list, which looks exactly like a quiet day. Write
 `~/.mindskein/config.toml`:
 
 ```toml
-[vault]
-path = "~/notes"          # optional base; ~ expands
-plan = "plan.md"          # relative to path, or absolute
+[priorities]
+file = "~/notes/plan.md"  # absolute, or a leading ~
 
 [status]
 hide_after = "7d"         # drop sessions quiet longer than this; "0" keeps all
@@ -96,7 +95,7 @@ A priority is a checkbox **and** a level token:
 ```
 
 The full contract — what splits a label from its note, how wikilinks resolve,
-what is deliberately not supported — is in [`docs/plan-format.md`](docs/plan-format.md).
+what is deliberately not supported — is in [`docs/priorities-format.md`](docs/priorities-format.md).
 
 ### 2. Check it is recording
 
