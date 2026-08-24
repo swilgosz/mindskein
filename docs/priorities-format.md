@@ -1,16 +1,15 @@
-# The plan format
+# The priorities format
 
 `mindskein priorities` reads one markdown file and prints the priorities in it.
 The file is yours: any note, any editor, any folder scheme. Point at it in
 `~/.mindskein/config.toml`:
 
 ```toml
-[vault]
-path = "~/notes"                 # optional base; ~ expands
-plan = "plan.md"                 # relative to path, or absolute
+[priorities]
+file = "~/notes/plan.md"         # absolute, or a leading ~
 ```
 
-Neither key has a default. A guessed layout is a guess about your filesystem,
+The key has no default. A guessed layout is a guess about your filesystem,
 and a wrong guess prints an empty list, which looks exactly like a quiet day.
 
 ## What counts as a priority

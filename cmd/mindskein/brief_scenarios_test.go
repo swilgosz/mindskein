@@ -28,7 +28,7 @@ func briefHome(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(vault, "plan.md"), []byte(plan), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"plan.md\"\n"
+	config := "[priorities]\nfile = " + strconv.Quote(filepath.Join(vault, "plan.md")) + "\n"
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}

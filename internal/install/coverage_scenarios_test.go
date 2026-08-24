@@ -45,7 +45,7 @@ func TestEnsureConfig(t *testing.T) {
 
 	t.Run("never overwrites an existing config", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.toml")
-		const mine = "[vault]\npath = \"/Users/me/Notes\"\n"
+		const mine = "[priorities]\nfile = \"/Users/me/Notes/plan.md\"\n"
 		if err := os.WriteFile(path, []byte(mine), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -74,8 +74,8 @@ func TestEnsureConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the starter config does not load: %v", err)
 		}
-		if cfg.Vault.Path != "" || cfg.Vault.Plan != "" {
-			t.Errorf("the starter guessed a vault: %+v", cfg.Vault)
+		if cfg.Priorities.File != "" {
+			t.Errorf("the starter guessed a priorities file: %+v", cfg.Priorities)
 		}
 	})
 
@@ -85,7 +85,7 @@ func TestEnsureConfig(t *testing.T) {
 			t.Fatalf("EnsureConfig: %v", err)
 		}
 		got, _ := os.ReadFile(path)
-		for _, want := range []string{"vault", "plan", "hide_after", "retention", "handoffs"} {
+		for _, want := range []string{"priorities", "file", "hide_after", "retention", "handoffs"} {
 			if !strings.Contains(string(got), want) {
 				t.Errorf("the starter does not mention %q", want)
 			}

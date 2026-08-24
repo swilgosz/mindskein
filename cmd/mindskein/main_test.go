@@ -544,7 +544,7 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 		}
 	})
 
-	config := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"plan.md\"\n"
+	config := "[priorities]\nfile = " + strconv.Quote(filepath.Join(vault, "plan.md")) + "\n"
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 	})
 
 	t.Run("says so when the configured plan is not there", func(t *testing.T) {
-		missing := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"absent.md\"\n"
+		missing := "[priorities]\nfile = " + strconv.Quote(filepath.Join(vault, "absent.md")) + "\n"
 		if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(missing), 0o600); err != nil {
 			t.Fatal(err)
 		}

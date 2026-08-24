@@ -91,7 +91,7 @@ func TestInitCommand(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("MINDSKEIN_HOME", home)
 		cfg := filepath.Join(home, "config.toml")
-		const mine = "[vault]\npath = \"/Users/me/Notes\"\n"
+		const mine = "[priorities]\nfile = \"/Users/me/Notes/plan.md\"\n"
 		if err := os.WriteFile(cfg, []byte(mine), 0o600); err != nil {
 			t.Fatal(err)
 		}

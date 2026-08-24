@@ -177,7 +177,7 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	)
 }
 
-// cmdPriorities prints the PRIORITIES block: what the vault's plan.md calls the
+// cmdPriorities prints the PRIORITIES block: what the configured note calls the
 // current focus, and what is queued behind it.
 //
 // Every way of having nothing to show — no config, no plan file, no priority
@@ -205,10 +205,10 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 // renderPriorities is the PRIORITIES block, shared by the brief and by the
 // command that prints it alone.
 func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
-	path := cfg.Vault.PlanPath()
+	path := cfg.Priorities.Path()
 	if path == "" {
 		return priorities.Hint(w,
-			"no plan configured — set vault.path and vault.plan in "+configFile())
+			"no priorities file configured — set priorities.file in "+configFile())
 	}
 	plan, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
