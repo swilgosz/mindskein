@@ -726,3 +726,98 @@ func TestHealth(t *testing.T) {
 		}
 	})
 }
+
+func TestReportTabs(t *testing.T) {
+	t.Run("carries cost per model for every day in the range, days without work included, and each day's events", func(t *testing.T) {
+		f := summarise(t,
+			assistant(t, "2026-10-14T10:00:00Z", "msg_1", "claude-opus-5-5", 5),
+			prompt(t, "2026-10-16T09:00:00Z", "ship it"),
+			assistant(t, "2026-10-16T09:00:01Z", "msg_2", "claude-sonnet-5", 5))
+		r := Build([]*Record{sessionRecord("", f)}, nil, now, 3, warsaw)
+		if len(r.Daily) != 3 || r.Daily[0].Day != "2026-10-14" || r.Daily[1].Day != "2026-10-15" || r.Daily[2].Day != "2026-10-16" {
+			t.Fatalf("daily = %+v, want the three days of the range in order", r.Daily)
+		}
+		if r.Daily[0].Cost["opus-5-5"] <= 0 || len(r.Daily[1].Cost) != 0 || r.Daily[2].Cost["sonnet-5"] <= 0 {
+			t.Errorf("daily cost = %+v / %+v / %+v, want opus on the first day, nothing on the second, sonnet on the third",
+				r.Daily[0].Cost, r.Daily[1].Cost, r.Daily[2].Cost)
+		}
+		if r.Daily[2].Events[EventPrompts] != 1 || r.Daily[0].Events[EventPrompts] != 0 {
+			t.Errorf("daily events = %+v / %+v, want the one prompt on its day", r.Daily[0].Events, r.Daily[2].Events)
+		}
+	})
+
+	t.Run("carries prompts by weekday and hour, in local time", func(t *testing.T) {
+		// 22:30 UTC on Thursday is 00:30 on Friday in Warsaw.
+		f := summarise(t,
+			prompt(t, "2026-10-15T22:30:00Z", "late one"),
+			assistant(t, "2026-10-15T22:30:01Z", "msg_1", "claude-opus-5-5", 5))
+		r := Build([]*Record{sessionRecord("", f)}, nil, now, 30, warsaw)
+		total := 0
+		for _, hours := range r.PromptHours {
+			for _, n := range hours {
+				total += n
+			}
+		}
+		if r.PromptHours[4][0] != 1 || total != 1 {
+			t.Errorf("prompt hours = %v, want one prompt on Friday (row 4) at hour 0", r.PromptHours)
+		}
+	})
+
+	t.Run("carries the largest tool results in the range, biggest first", func(t *testing.T) {
+		f := summarise(t,
+			assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5,
+				toolUse("tu1", "Read", map[string]any{"file_path": "/a.md"}),
+				toolUse("tu2", "Bash", map[string]any{"command": "cat big.log"})),
+			toolResult(t, "2026-10-15T10:00:01Z", "tu1", strings.Repeat("a", 40000), false),
+			toolResult(t, "2026-10-15T10:00:02Z", "tu2", strings.Repeat("b", 60000), false))
+		r := Build([]*Record{sessionRecord("", f)}, nil, now, 30, warsaw)
+		if len(r.BigResults) != 2 || r.BigResults[0].Tool != "Bash" || r.BigResults[0].Bytes <= r.BigResults[1].Bytes {
+			t.Errorf("big results = %+v, want both, the Bash dump first", r.BigResults)
+		}
+	})
+
+	t.Run("carries each installed item's and MCP server's uses in the last 90 days, beside the item", func(t *testing.T) {
+		root := fullRoot(t)
+		f := summarise(t,
+			prompt(t, "2026-10-15T10:00:00Z", "<command-name>/worktree</command-name>"),
+			assistant(t, "2026-10-15T10:00:01Z", "msg_1", "claude-opus-5-5", 5,
+				toolUse("tu1", "mcp__github__search", map[string]any{"q": "x"})))
+		r := Build([]*Record{sessionRecord(root, f)}, []Inventory{Scan(root, nil)}, now, 30, warsaw)
+		uses := map[string]int{}
+		for _, inv := range r.Inventory {
+			for _, it := range inv.Items {
+				uses[it.Kind+":"+it.Name] = it.Uses90
+			}
+			for _, m := range inv.MCP {
+				uses["mcp:"+m.Name] = m.Uses90
+			}
+		}
+		if uses["skill:worktree"] != 1 || uses["skill:unused-skill"] != 0 || uses["mcp:github"] != 1 || uses["mcp:slack"] != 0 {
+			t.Errorf("90-day uses = %v, want worktree and github once, the rest never", uses)
+		}
+	})
+
+	t.Run("carries how often each skill, command, agent and MCP server ran in the range", func(t *testing.T) {
+		root := skillRoot(t)
+		f := summarise(t,
+			prompt(t, "2026-09-01T10:00:00Z", "<command-name>/worktree</command-name>"),
+			prompt(t, "2026-10-15T10:00:00Z", "<command-name>/worktree</command-name>"),
+			prompt(t, "2026-10-15T11:00:00Z", "<command-name>/worktree</command-name>"),
+			assistant(t, "2026-10-15T11:00:01Z", "msg_1", "claude-opus-5-5", 5,
+				toolUse("tu1", "Task", map[string]any{"subagent_type": "Explore", "prompt": "find"})))
+		r := Build([]*Record{sessionRecord(root, f)}, nil, now, 30, warsaw)
+		got := map[string]int{}
+		for _, u := range r.Uses {
+			got[u.Kind+":"+u.Name] = u.Count
+			if u.Root != root {
+				t.Errorf("use %+v lost its root", u)
+			}
+		}
+		if got["command:worktree"] != 2 || got["agent:Explore"] != 1 {
+			t.Errorf("uses = %v, want the command twice in the range — not the third, 45 days back — and the agent once", got)
+		}
+		if len(r.Uses) > 1 && r.Uses[0].Count < r.Uses[1].Count {
+			t.Errorf("uses = %+v, want most first", r.Uses)
+		}
+	})
+}

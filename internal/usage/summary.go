@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,6 +79,9 @@ type File struct {
 	Uses   map[string]map[string]int      `json:"uses"`
 	Events map[string]map[string]int      `json:"events"`
 
+	// Hours counts prompts by local day, then by hour of that day.
+	Hours map[string]map[string]int `json:"hours,omitempty"`
+
 	HookErrors map[string]int `json:"hook_errors,omitempty"`
 	Big        []BigResult    `json:"big,omitempty"`
 
@@ -134,6 +138,7 @@ func newFile() *File {
 		Tools:   map[string]map[string]ToolStat{},
 		Uses:    map[string]map[string]int{},
 		Events:  map[string]map[string]int{},
+		Hours:   map[string]map[string]int{},
 		Pending: map[string]pendingTool{},
 	}
 }
@@ -151,6 +156,9 @@ func (f *File) ensure() {
 	}
 	if f.Events == nil {
 		f.Events = map[string]map[string]int{}
+	}
+	if f.Hours == nil {
+		f.Hours = map[string]map[string]int{}
 	}
 	if f.Pending == nil {
 		f.Pending = map[string]pendingTool{}
@@ -292,9 +300,11 @@ func (f *File) line(line string, loc *time.Location) {
 	}
 
 	var day string
+	hour := 0
 	if !rec.Timestamp.IsZero() {
 		ts := rec.Timestamp
 		day = ts.In(loc).Format(time.DateOnly)
+		hour = ts.In(loc).Hour()
 		if f.Start.IsZero() || ts.Before(f.Start) {
 			f.Start = ts
 		}
@@ -313,7 +323,7 @@ func (f *File) line(line string, loc *time.Location) {
 	case "assistant":
 		f.assistant(rec, day)
 	case "user":
-		f.user(rec, day, len(line))
+		f.user(rec, day, hour, len(line))
 	case "system":
 		switch rec.Subtype {
 		case "compact_boundary":
@@ -443,14 +453,14 @@ func firstCommand(cmd string) string {
 	return clip(filepath.Base(fields[0]), 40)
 }
 
-func (f *File) user(rec record, day string, lineLen int) {
+func (f *File) user(rec record, day string, hour, lineLen int) {
 	var m message
 	if json.Unmarshal(rec.Message, &m) != nil {
 		return
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) == nil {
-		f.userText(rec, day, s)
+		f.userText(rec, day, hour, s)
 		return
 	}
 	var blocks []contentBlock
@@ -467,11 +477,11 @@ func (f *File) user(rec record, day string, lineLen int) {
 		}
 	}
 	if len(text) > 0 {
-		f.userText(rec, day, strings.Join(text, "\n"))
+		f.userText(rec, day, hour, strings.Join(text, "\n"))
 	}
 }
 
-func (f *File) userText(rec record, day, s string) {
+func (f *File) userText(rec record, day string, hour int, s string) {
 	if strings.Contains(s, interrupted) {
 		f.event(day, EventInterrupts, 1)
 	}
@@ -489,6 +499,9 @@ func (f *File) userText(rec record, day, s string) {
 		return
 	}
 	f.event(day, EventPrompts, 1)
+	if day != "" {
+		bump(f.Hours, day, strconv.Itoa(hour), func(v *int) { *v++ })
+	}
 	if f.FirstPrompt == "" {
 		f.FirstPrompt = clip(oneLine(s), 120)
 	}
