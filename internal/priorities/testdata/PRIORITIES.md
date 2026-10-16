@@ -9,7 +9,7 @@ tags:
 ## Priorities
 
 ### Now (!1)
-- [ ] !1 [[6. Spaces/62. Business/623. Projects/Wren Deploy Tool/_index]] — **Installer post LIVE 2026-08-12** (Ada, ~20k builders), coupon `WRENLAUNCH`. Traffic is arriving now, and the redemption path it lands on has **4 confirmed defects in production** — the worst of them promises a free set to existing customers and then refuses them. Fix order: eligibility check → key → end-to-end run. See [[6. Spaces/62. Business/624. Support Notes/products/Wren/_index|the product note]].
+- [ ] !1 [[6. Spaces/62. Business/623. Projects/Wren Deploy Tool/Wren Deploy Tool]] — **Installer post LIVE 2026-08-12** (Ada, ~20k builders), coupon `WRENLAUNCH`. Traffic is arriving now, and the redemption path it lands on has **4 confirmed defects in production** — the worst of them promises a free set to existing customers and then refuses them. Fix order: eligibility check → key → end-to-end run. See [[6. Spaces/62. Business/624. Support Notes/products/Wren/_index|the product note]].
 - [ ] !1 [[Kalendarz Wydawniczy|Publishing Calendar]] — finalize and launch
 
 ### Next (!2)

@@ -1,7 +1,5 @@
 // Command mindskein answers the morning question: what are my priorities,
 // what's running elsewhere, and where did we leave off?
-//
-// Scope and roadmap live in the vault, not in this repo.
 package main
 
 import (

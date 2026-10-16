@@ -26,8 +26,7 @@ func loadHorizon(t *testing.T, body string) time.Duration {
 }
 
 // TestHideAfterConfiguration covers reading the retention horizon from
-// ~/.mindskein/config.toml — the file the roadmap already assigns the vault
-// path, plan.md path and project roots to.
+// ~/.mindskein/config.toml.
 func TestHideAfterConfiguration(t *testing.T) {
 	t.Run("defaults to seven days when there is no config file", func(t *testing.T) {
 		// The normal state: nobody has written the file yet.

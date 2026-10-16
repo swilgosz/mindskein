@@ -86,8 +86,8 @@ func TestLocateWorktree(t *testing.T) {
 	}
 }
 
-// TestLocateOutsideRepo covers the vault, which is not a repository. A handoff
-// must still be written for it.
+// TestLocateOutsideRepo covers a notes folder, which is not a repository. A
+// handoff must still be written for it.
 func TestLocateOutsideRepo(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "62. Business")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -198,9 +198,9 @@ func message(h *Handoff) string {
 // ByProject groups by the workstream a session belonged to, which is a
 // different question in and out of a repository. Inside one, the repository is
 // the work and its worktrees are tasks within it, so they collapse. Outside,
-// the folder is not the work — the vault hosts content, branding and product
-// sessions in one directory — and the only thing naming a session is what it
-// was called, so a title keys its own line.
+// the folder is not the work — one notes folder can host content, branding and
+// product sessions side by side — and the only thing naming a session is what
+// it was called, so a title keys its own line.
 //
 // Sessions are keyed within their folder rather than by title alone, so two
 // unrelated sessions that happen to share a generated title cannot swallow one

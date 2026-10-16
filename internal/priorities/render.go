@@ -13,8 +13,8 @@ import (
 // could not be produced.
 const Heading = "PRIORITIES"
 
-// Column widths, set against the real plan rather than guessed: project notes
-// in the vault are named for their folder, and those run to 34 characters.
+// Column widths, measured rather than guessed: project notes named for their
+// folder run to 34 characters.
 const (
 	maxLabelWidth = 32
 	maxNoteWidth  = 64
