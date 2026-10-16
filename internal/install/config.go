@@ -28,6 +28,11 @@ const starterConfig = `# mindskein configuration.
 # sessions = "30d"
 # handoffs = "90d"
 # usage = "180d"
+
+# [serve]
+# Basic auth for mindskein serve. Set both before tunnelling it anywhere.
+# user = "admin"
+# password = "change me"
 `
 
 // EnsureConfig writes a starter config when there is none, and reports

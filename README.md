@@ -147,6 +147,7 @@ mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
 mindskein usage         # token spend and what to improve in your setup
+mindskein serve         # the dashboard in a browser, on 127.0.0.1
 mindskein prune         # delete state past its retention horizon
 mindskein init          # register the hooks; --uninstall removes them
 ```
@@ -181,6 +182,24 @@ report covers all of them with a per-account line, and `--root
 and `--json` prints the report as the machine-readable contract other surfaces
 read. Costs use API list prices: on a subscription they are the value consumed,
 not the bill.
+
+### Dashboard
+
+`mindskein serve` opens the same answers in a browser at
+`http://127.0.0.1:8787`: usage, the brief, setup (are the hooks registered,
+what failed) and the health of each Claude config. It listens on the loopback
+interface only, and the page loads nothing from the internet.
+
+Anyone who reaches the port sees session titles, prompts and tool inputs. Set
+a password before you tunnel it to another device:
+
+```toml
+[serve]
+user = "admin"
+password = "something long"
+```
+
+`--port` picks another port.
 
 ## What it stores, and where
 
