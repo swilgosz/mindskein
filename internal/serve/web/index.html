@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>mindskein</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -14,7 +15,7 @@
       <span class="logo">mindskein</span>
       <span id="version" class="version"></span>
     </div>
-    <nav id="nav" class="nav" aria-label="Pages"></nav>
+    <nav id="nav" class="nav" aria-label="Sections"></nav>
     <div class="side-foot">
       <button id="theme" type="button" class="icon-btn" title="Toggle light and dark" aria-label="Toggle light and dark">◐</button>
     </div>
@@ -30,9 +31,11 @@
         <button id="refresh" type="button">Refresh</button>
       </div>
     </header>
+    <nav id="tabs" class="tabs" aria-label="Views" hidden></nav>
     <div id="page" class="grid" aria-live="polite"></div>
   </main>
 </div>
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>
