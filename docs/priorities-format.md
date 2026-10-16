@@ -55,13 +55,15 @@ Optional. If a line names a note, the label comes from the link:
 | You write | Label |
 | --- | --- |
 | `[[Ship & Sell Kit]]` | Ship & Sell Kit |
+| `[[projects/kit/kit]]` | kit |
+| `[[projects/kit/kit\|The Kit]]` | The Kit |
 | `[[projects/kit/_index]]` | kit |
-| `[[projects/kit/_index\|The Kit]]` | The Kit |
 | `[[Roadmap#v0.2]]` | Roadmap |
 
-`_index` takes its name from its folder, because in a vault where every project
-note is called `_index` the filename identifies nothing. A separator inside a
-link is part of the title, not a split point.
+A folder note named after its folder labels itself. `_index` is the exception:
+it takes its name from its folder, because where every folder note is called
+`_index` the filename identifies nothing. A separator inside a link is part of
+the title, not a split point.
 
 ## When nothing prints
 

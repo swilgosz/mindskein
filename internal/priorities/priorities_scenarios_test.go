@@ -176,9 +176,20 @@ func TestResolvingLabels(t *testing.T) {
 		}
 	})
 
+	t.Run("names a folder note by its own name", func(t *testing.T) {
+		got := label(t, "- [ ] !1 [[623. Projects/Wren Deploy Tool/Wren Deploy Tool]] — note")
+		if got != "Wren Deploy Tool" {
+			t.Errorf("label = %q, want %q", got, "Wren Deploy Tool")
+		}
+		got = label(t, "- [ ] !1 [[Wren Deploy Tool/Wren Deploy Tool.md]] — note")
+		if got != "Wren Deploy Tool" {
+			t.Errorf("label = %q, want %q", got, "Wren Deploy Tool")
+		}
+	})
+
 	t.Run("names an _index note by the folder that gives it its identity", func(t *testing.T) {
-		// Every project note in the vault is called _index, so the file name
-		// alone would label them all the same.
+		// Where every folder note is called _index, the file name alone would
+		// label them all the same.
 		got := label(t, "- [ ] !1 [[6. Spaces/62. Business/623. Projects/Wren Deploy Tool/_index]] — note")
 		if got != "Wren Deploy Tool" {
 			t.Errorf("label = %q, want %q", got, "Wren Deploy Tool")

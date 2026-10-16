@@ -195,8 +195,8 @@ func linkLabel(target string) string {
 
 	segments := strings.Split(name, "/")
 	last := segments[len(segments)-1]
-	// An _index note takes its identity from its folder; every project in the
-	// vault has one, so the file name alone would label them all the same.
+	// An _index note takes its identity from its folder. Where every folder
+	// note is called _index, the file name alone would label them all the same.
 	if last == "_index" && len(segments) > 1 {
 		last = segments[len(segments)-2]
 	}
