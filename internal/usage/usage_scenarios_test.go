@@ -821,3 +821,22 @@ func TestReportTabs(t *testing.T) {
 		}
 	})
 }
+
+func TestBashUses(t *testing.T) {
+	t.Run("a Bash use is named by the program it runs, past assignments, a leading cd and quoted paths", func(t *testing.T) {
+		for cmd, want := range map[string]string{
+			`S=/tmp/x/scratchpad; mkdir -p "$S"`:                         "mkdir",
+			`~/SecondBrain/"4. Extras/Apps/scripts/obs.sh" check "x.md"`: "obs.sh",
+			`cd "/Users/s/6. Spaces/x" && git status`:                    "git",
+			`cd /tmp; ls`: "ls",
+			`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" -h`: "Google Chrome",
+			`FOO=1 BAR="a b" go test ./...`:                                     "go",
+			`echo hi | head -1`:                                                 "echo",
+			"\n  git log --oneline\n":                                           "git",
+		} {
+			if got := firstCommand(cmd); got != want {
+				t.Errorf("firstCommand(%q) = %q, want %q", cmd, got, want)
+			}
+		}
+	})
+}
