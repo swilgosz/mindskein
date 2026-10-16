@@ -27,6 +27,7 @@ const starterConfig = `# mindskein configuration.
 # How long state is kept before prune deletes it. 0 keeps it forever.
 # sessions = "30d"
 # handoffs = "90d"
+# usage = "180d"
 `
 
 // EnsureConfig writes a starter config when there is none, and reports

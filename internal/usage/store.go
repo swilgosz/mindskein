@@ -161,11 +161,16 @@ func (s *Store) save(r *Record) error {
 type Result struct {
 	Parsed  int `json:"parsed"`
 	Skipped int `json:"skipped"`
+
+	// Expired counts transcripts a backfill left alone for being older than
+	// the retention horizon.
+	Expired int `json:"expired"`
 }
 
 func (r *Result) add(o Result) {
 	r.Parsed += o.Parsed
 	r.Skipped += o.Skipped
+	r.Expired += o.Expired
 }
 
 // Capture brings the session's record up to date with its transcript and the
@@ -276,13 +281,19 @@ func configRoot(transcript string) string {
 }
 
 // Backfill captures every session transcript under each root's projects
-// directory.
-func (s *Store) Backfill(roots []string) (Result, error) {
+// directory. A transcript last written before since is skipped: prune would
+// delete its record on the next sweep, and a backfill restoring it every run
+// would undo the retention horizon. A zero since reads everything.
+func (s *Store) Backfill(roots []string, since time.Time) (Result, error) {
 	var res Result
 	var errs []error
 	for _, root := range roots {
 		paths, _ := filepath.Glob(filepath.Join(root, "projects", "*", "*.jsonl"))
 		for _, p := range paths {
+			if info, err := os.Stat(p); err == nil && info.ModTime().Before(since) {
+				res.Expired++
+				continue
+			}
 			r, err := s.Capture(p)
 			res.add(r)
 			if err != nil {

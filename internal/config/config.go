@@ -24,8 +24,8 @@ import (
 // removes those, so without a horizon the registry only ever grows.
 const DefaultHideAfter = 7 * 24 * time.Hour
 
-// DefaultPruneSessions and DefaultPruneHandoffs are how long state survives
-// before prune deletes it.
+// DefaultPruneSessions, DefaultPruneHandoffs and DefaultPruneUsage are how
+// long state survives before prune deletes it.
 //
 // Both are far past DefaultHideAfter. Hiding a record is a display decision
 // and costs nothing if it is wrong; deleting one is permanent, so these are
@@ -36,9 +36,15 @@ const DefaultHideAfter = 7 * 24 * time.Hour
 // status that stops meaning anything once the process is gone; a handoff is
 // the answer to "where did we leave off", which is what the tool exists to
 // give back.
+//
+// Usage records outlive both. Findings about unused skills read 90 days back
+// and a record is dated by its last turn, so at 90 the oldest one kept starts
+// just inside that window and the report would say its history is short
+// whenever those first days had no sessions. Twice the window clears that.
 const (
 	DefaultPruneSessions = 30 * 24 * time.Hour
 	DefaultPruneHandoffs = 90 * 24 * time.Hour
+	DefaultPruneUsage    = 180 * 24 * time.Hour
 )
 
 // Config is the contents of ~/.mindskein/config.toml.
@@ -90,9 +96,9 @@ type Status struct {
 	HideAfter Duration `toml:"hide_after"`
 }
 
-// Retention is how long state is kept before prune deletes it. Both are far
-// longer than the display horizon in [status]: hiding a record is reversible
-// and deleting one is not.
+// Retention is how long state is kept before prune deletes it. All three are
+// far longer than the display horizon in [status]: hiding a record is
+// reversible and deleting one is not.
 type Retention struct {
 	// Sessions drops session records quiet for longer than this. Zero keeps
 	// them forever, which is what every version before this one did.
@@ -101,6 +107,10 @@ type Retention struct {
 	// Handoffs drops handoffs that ended longer ago than this. Kept longer
 	// than Sessions: a handoff is the answer the tool exists to give.
 	Handoffs Duration `toml:"handoffs"`
+
+	// Usage drops usage records whose session's last turn is older than
+	// this. They hold titles, first prompts and tool inputs.
+	Usage Duration `toml:"usage"`
 }
 
 // Defaults is the configuration used when there is no file to read.
@@ -110,6 +120,7 @@ func Defaults() Config {
 		Retention: Retention{
 			Sessions: Duration(DefaultPruneSessions),
 			Handoffs: Duration(DefaultPruneHandoffs),
+			Usage:    Duration(DefaultPruneUsage),
 		},
 	}
 }
@@ -148,6 +159,9 @@ func Load(path string) (Config, error) {
 	}
 	if meta.IsDefined("retention", "handoffs") {
 		cfg.Retention.Handoffs = file.Retention.Handoffs
+	}
+	if meta.IsDefined("retention", "usage") {
+		cfg.Retention.Usage = file.Retention.Usage
 	}
 	cfg.Priorities = file.Priorities
 	if p := cfg.Priorities.Path(); p != "" && !filepath.IsAbs(p) {

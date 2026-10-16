@@ -85,7 +85,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
 			return cmdInit(args, stdout, stderr)
 		}},
-		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
+		{"prune", "delete session records, handoffs and usage records past their retention horizons", func(args []string, _ io.Reader) error {
 			return cmdPrune(args, stdout, stderr)
 		}},
 		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
@@ -505,8 +505,8 @@ func cmdPrune(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-// prune sweeps both stores and returns one result per store. A failure on one
-// does not stop the other: they are independent directories, and a permission
+// prune sweeps every store and returns one result per store. A failure on one
+// does not stop the others: they are independent directories, and a permission
 // problem on handoffs is no reason to leave session records uncollected.
 func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResult, error) {
 	var results []*session.PruneResult
@@ -532,14 +532,26 @@ func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResul
 		results = append(results, res)
 	}
 
-	// Both are returned. Whatever was collected is worth reporting, and the
+	if store, err := insight.DefaultStore(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Usage), dryRun); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		results = append(results, res)
+	}
+
+	// All are returned. Whatever was collected is worth reporting, and the
 	// failure is still a failure: swallowing it because the other store
 	// happened to succeed would let a directory quietly stop being pruned.
 	return results, firstErr
 }
 
 // pruneStamp is the file recording the last sweep. Without it the hook would
-// walk both directories on every turn.
+// walk every store on every turn.
 const pruneStamp = "last-prune"
 
 // pruneDaily sweeps at most once a day, from the Stop hook.
@@ -684,9 +696,14 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 	if *backfill {
 		start := time.Now()
 		roots := store.Roots(fs.Args()...)
-		res, err := store.Backfill(roots)
-		fmt.Fprintf(stderr, "backfill: %d transcripts read, %d unchanged, %s, from %s\n",
-			res.Parsed, res.Skipped, time.Since(start).Round(time.Millisecond), strings.Join(roots, ", "))
+		cfg, _ := loadConfig()
+		var since time.Time
+		if h := time.Duration(cfg.Retention.Usage); h > 0 {
+			since = start.Add(-h)
+		}
+		res, err := store.Backfill(roots, since)
+		fmt.Fprintf(stderr, "backfill: %d transcripts read, %d unchanged, %d older than retention, %s, from %s\n",
+			res.Parsed, res.Skipped, res.Expired, time.Since(start).Round(time.Millisecond), strings.Join(roots, ", "))
 		if err != nil {
 			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
 		}

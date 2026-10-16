@@ -251,7 +251,7 @@ func TestCapture(t *testing.T) {
 		writeTranscript(t, root, "sess0001", assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
 		writeTranscript(t, root, "sess0002", assistant(t, "2026-10-15T11:00:00Z", "msg_1", "claude-opus-5-5", 5))
 		store := &Store{Dir: t.TempDir(), Loc: warsaw}
-		res, err := store.Backfill([]string{root})
+		res, err := store.Backfill([]string{root}, time.Time{})
 		if err != nil || res.Parsed != 2 {
 			t.Fatalf("backfill = %+v, %v", res, err)
 		}
@@ -259,8 +259,25 @@ func TestCapture(t *testing.T) {
 		if len(recs) != 2 || recs[0].Root != root {
 			t.Fatalf("records = %d, root %q", len(recs), recs[0].Root)
 		}
-		if res, _ := store.Backfill([]string{root}); res.Parsed != 0 {
+		if res, _ := store.Backfill([]string{root}, time.Time{}); res.Parsed != 0 {
 			t.Errorf("second backfill parsed %d", res.Parsed)
+		}
+	})
+
+	t.Run("backfill skips a transcript last written before the usage horizon, so it never restores a record prune deleted", func(t *testing.T) {
+		root := t.TempDir()
+		old := writeTranscript(t, root, "sess0001", assistant(t, "2026-03-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		writeTranscript(t, root, "sess0002", assistant(t, "2026-10-15T11:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		aged := time.Now().Add(-200 * 24 * time.Hour)
+		os.Chtimes(old, aged, aged)
+
+		store := &Store{Dir: t.TempDir(), Loc: warsaw}
+		res, err := store.Backfill([]string{root}, time.Now().Add(-180*24*time.Hour))
+		if err != nil || res.Parsed != 1 || res.Expired != 1 {
+			t.Fatalf("backfill = %+v, %v; want one read and one past the horizon", res, err)
+		}
+		if _, err := store.Load("sess0001"); err == nil {
+			t.Error("backfill restored a session older than the horizon")
 		}
 	})
 }
@@ -557,3 +574,123 @@ func TestReportFindings(t *testing.T) {
 	}
 }
 
+// agedRecord stores a session whose last turn ended age before now. The file
+// itself is written today, as a backfill would write it.
+func agedRecord(t *testing.T, store *Store, id string, start, end time.Time) string {
+	t.Helper()
+	f := newFile()
+	f.SessionID, f.Start, f.End = id, start, end
+	if err := store.save(&Record{Version: recordVersion, SessionID: id, File: f}); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := store.path(id)
+	return path
+}
+
+func TestPrune(t *testing.T) {
+	const day = 24 * time.Hour
+	horizon := 180 * day
+	quiet := func(age time.Duration) (time.Time, time.Time) { return now.Add(-age - time.Hour), now.Add(-age) }
+
+	t.Run("deletes a usage record whose session has been quiet longer than the horizon, and keeps a younger one", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		s, e := quiet(horizon + day)
+		old := agedRecord(t, store, "old00001", s, e)
+		s, e = quiet(horizon - day)
+		young := agedRecord(t, store, "new00001", s, e)
+
+		res, err := store.Prune(now, horizon, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Removed) != 1 || res.Removed[0] != "old00001" || res.Kept != 1 {
+			t.Errorf("Removed = %v, Kept = %d; want old00001 removed and one kept", res.Removed, res.Kept)
+		}
+		if _, err := os.Stat(old); err == nil {
+			t.Error("reported as removed but still on disk")
+		}
+		if _, err := os.Stat(young); err != nil {
+			t.Error("a record inside the horizon was deleted")
+		}
+	})
+
+	t.Run("a session's age is its last turn, not its first", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		path := agedRecord(t, store, "long0001", now.Add(-400*day), now.Add(-day))
+		if _, err := store.Prune(now, horizon, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Error("a session that ran yesterday was deleted for when it started")
+		}
+	})
+
+	t.Run("an explicit zero keeps every record", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		s, e := quiet(10 * 365 * day)
+		path := agedRecord(t, store, "old00001", s, e)
+		res, err := store.Prune(now, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Removed) != 0 {
+			t.Errorf("retention off must mean off: %v", res.Removed)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Error("deleted with retention off")
+		}
+	})
+
+	t.Run("a dry run reports without deleting, and names what it pruned", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		s, e := quiet(horizon + day)
+		path := agedRecord(t, store, "old00001", s, e)
+		res, _ := store.Prune(now, horizon, true)
+		if len(res.Removed) != 1 {
+			t.Fatalf("a dry run must still say what would go: %v", res.Removed)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Error("the dry run deleted the file it was only asked about")
+		}
+		if got := res.Summary(); !strings.Contains(got, "would remove 1 usage record") || !strings.Contains(got, "180d") {
+			t.Errorf("summary = %q, want what would go, as usage records, under which rule", got)
+		}
+	})
+
+	t.Run("a record that does not parse is judged by its file's age", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		stale := filepath.Join(store.Dir, "brok0001.json")
+		fresh := filepath.Join(store.Dir, "brok0002.json")
+		for _, p := range []string{stale, fresh} {
+			os.WriteFile(p, []byte(`{"version":`), 0o600)
+		}
+		aged := now.Add(-horizon - day)
+		os.Chtimes(stale, aged, aged)
+		os.Chtimes(fresh, now, now)
+
+		res, err := store.Prune(now, horizon, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Removed) != 1 || res.Removed[0] != "brok0001" {
+			t.Errorf("Removed = %v, want the stale unreadable record only", res.Removed)
+		}
+		if _, err := os.Stat(fresh); err != nil {
+			t.Error("a record being written was collected mid-write")
+		}
+	})
+
+	t.Run("leaves a file it does not own alone", func(t *testing.T) {
+		store := &Store{Dir: t.TempDir()}
+		stray := filepath.Join(store.Dir, "README.txt")
+		os.WriteFile(stray, []byte("mine"), 0o600)
+		aged := now.Add(-10 * 365 * day)
+		os.Chtimes(stray, aged, aged)
+		if _, err := store.Prune(now, horizon, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(stray); err != nil {
+			t.Error("prune deleted a file that was never its to manage")
+		}
+	})
+}
