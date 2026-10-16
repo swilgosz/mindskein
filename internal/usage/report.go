@@ -94,6 +94,23 @@ type Report struct {
 	Findings    []Finding      `json:"findings"`
 
 	Inventory []Inventory `json:"inventory"`
+
+	// HistoryDays is how far back the store reaches. Unused-item findings are
+	// only as good as it is long.
+	HistoryDays int `json:"history_days"`
+}
+
+func historyDays(records []*Record, now time.Time) int {
+	var first time.Time
+	for _, r := range records {
+		if s := r.File.Start; !s.IsZero() && (first.IsZero() || s.Before(first)) {
+			first = s
+		}
+	}
+	if first.IsZero() {
+		return 0
+	}
+	return int(now.Sub(first).Hours()/24) + 1
 }
 
 // Build aggregates records over the last days (0 means all time) and judges
@@ -248,6 +265,17 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 	}
 
 	r.Findings = findings(r, inv, uses90, hookErrors, big, listing, turns, bigTurns)
+	r.HistoryDays = historyDays(records, now)
+	if r.HistoryDays < UnusedDays {
+		caveat := fmt.Sprintf("Recorded history covers only %d days, so this counts as unused anything not used in those days. Run `mindskein usage --backfill` to judge the full %d.", r.HistoryDays, UnusedDays)
+		for i := range r.Findings {
+			if strings.Contains(r.Findings[i].Title, "in 90 days") {
+				r.Findings[i].Severity = Warning
+				r.Findings[i].Advice += " " + caveat
+			}
+		}
+		sort.SliceStable(r.Findings, func(i, j int) bool { return r.Findings[i].Severity < r.Findings[j].Severity })
+	}
 	return r
 }
 

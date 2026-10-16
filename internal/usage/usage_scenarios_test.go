@@ -282,6 +282,22 @@ func TestReport(t *testing.T) {
 		}
 	})
 
+	t.Run("unused findings on a store shorter than 90 days say how much history they rest on", func(t *testing.T) {
+		root := skillRoot(t)
+		f := summarise(t, assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		r := Build([]*Record{sessionRecord(root, f)}, []Inventory{Scan(root, nil)}, now, 30, warsaw)
+		for _, fd := range r.Findings {
+			if !strings.Contains(fd.Title, "unused in 90 days") {
+				continue
+			}
+			if fd.Severity != Warning || !strings.Contains(fd.Advice, "only 2 days") || !strings.Contains(fd.Advice, "--backfill") {
+				t.Errorf("finding = %+v, want a warning that names the 2 days of history and the backfill", fd)
+			}
+			return
+		}
+		t.Fatalf("no unused finding: %+v", r.Findings)
+	})
+
 	t.Run("a skill invoked through the Skill tool and the same skill run as a slash command count as uses of one skill", func(t *testing.T) {
 		root := skillRoot(t)
 		viaTool := summarise(t, assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5,
