@@ -279,25 +279,32 @@ func hooks(root string, settings map[string]any) []Hook {
 func contextFiles(root string, cwds []string) []ContextFile {
 	var out []ContextFile
 	seen := map[string]bool{}
-	add := func(kind, path string) {
+	add := func(kind, path string) string {
 		if seen[path] {
-			return
+			return ""
 		}
 		seen[path] = true
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return
+			return ""
 		}
 		out = append(out, ContextFile{Root: root, Kind: kind, Path: path, Lines: strings.Count(string(data), "\n"), Chars: len(data)})
+		return string(data)
 	}
 	add("global", filepath.Join(root, "CLAUDE.md"))
 	mems, _ := filepath.Glob(filepath.Join(root, "projects", "*", "memory", "MEMORY.md"))
 	for _, m := range mems {
 		add("memory-index", m)
 	}
+	// Claude Code loads CLAUDE.md from the session's folder and every folder
+	// above it, short of /. It never reads AGENTS.md on its own; a CLAUDE.md
+	// has to import it.
 	for _, cwd := range cwds {
-		for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
-			add("project", filepath.Join(cwd, name))
+		for dir := cwd; filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
+			text := add("project", filepath.Join(dir, "CLAUDE.md"))
+			if strings.Contains(text, "@AGENTS.md") || strings.Contains(text, "@./AGENTS.md") {
+				add("project", filepath.Join(dir, "AGENTS.md"))
+			}
 		}
 	}
 	return out

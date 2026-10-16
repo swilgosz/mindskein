@@ -129,6 +129,29 @@ func TestSummarise(t *testing.T) {
 		}
 	})
 
+	t.Run("a tool result's size is the text it adds to the context; an image in it adds nothing to the size", func(t *testing.T) {
+		screenshot := strings.Repeat("A", 500_000)
+		f := summarise(t,
+			assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5,
+				toolUse("toolu_1", "Read", map[string]any{"file_path": "/x/shot.png"})),
+			line(t, map[string]any{
+				"type": "user", "timestamp": "2026-10-15T10:00:01Z",
+				"message": map[string]any{"role": "user", "content": []map[string]any{{
+					"type": "tool_result", "tool_use_id": "toolu_1", "content": []map[string]any{
+						{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": screenshot}},
+						{"type": "text", "text": "caption"},
+					},
+				}}},
+			}),
+		)
+		if got := f.Tools["2026-10-15"]["Read"].ResultBytes; got != int64(len("caption")) {
+			t.Errorf("Read result = %d, want %d: only the text block reaches the context as text", got, len("caption"))
+		}
+		if len(f.Big) != 0 {
+			t.Errorf("big results = %+v, want none: a screenshot is not a large text dump", f.Big)
+		}
+	})
+
 	t.Run("prompts, slash commands and interrupts are told apart", func(t *testing.T) {
 		f := summarise(t,
 			prompt(t, "2026-10-15T10:00:00Z", "fix the flaky test"),
@@ -296,6 +319,50 @@ func TestReport(t *testing.T) {
 			return
 		}
 		t.Fatalf("no unused finding: %+v", r.Findings)
+	})
+
+	t.Run("an unused finding resting on less than 90 days of history says backfill adds only transcripts still on disk, and what deletes older ones", func(t *testing.T) {
+		root := skillRoot(t)
+		f := summarise(t, assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		r := Build([]*Record{sessionRecord(root, f)}, []Inventory{Scan(root, nil)}, now, 30, warsaw)
+		for _, fd := range r.Findings {
+			if !strings.Contains(fd.Title, "unused in 90 days") {
+				continue
+			}
+			if !strings.Contains(fd.Advice, "still on disk") || !strings.Contains(fd.Advice, "cleanupPeriodDays") {
+				t.Errorf("advice = %q, want it to say backfill reaches only transcripts still on disk, and name cleanupPeriodDays", fd.Advice)
+			}
+			return
+		}
+		t.Fatalf("no unused finding: %+v", r.Findings)
+	})
+
+	t.Run("an instruction file counts as always loaded only where Claude Code loads it", func(t *testing.T) {
+		vault := t.TempDir()
+		cwd := filepath.Join(vault, "spaces", "business")
+		write := func(path, body string) {
+			os.MkdirAll(filepath.Dir(path), 0o700)
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write(filepath.Join(vault, "CLAUDE.md"), "vault-wide instructions\n")
+		write(filepath.Join(vault, "AGENTS.md"), "the same, for another agent\n")
+		write(filepath.Join(cwd, "CLAUDE.md"), "@AGENTS.md\n")
+		write(filepath.Join(cwd, "AGENTS.md"), "shared instructions\n")
+
+		loaded := map[string]bool{}
+		for _, c := range Scan(t.TempDir(), []string{cwd}).Context {
+			loaded[c.Path] = true
+		}
+		for _, want := range []string{filepath.Join(vault, "CLAUDE.md"), filepath.Join(cwd, "CLAUDE.md"), filepath.Join(cwd, "AGENTS.md")} {
+			if !loaded[want] {
+				t.Errorf("%s is loaded into every session started in %s; context = %v", want, cwd, loaded)
+			}
+		}
+		if notLoaded := filepath.Join(vault, "AGENTS.md"); loaded[notLoaded] {
+			t.Errorf("%s is imported by no CLAUDE.md and never loaded", notLoaded)
+		}
 	})
 
 	t.Run("a skill invoked through the Skill tool and the same skill run as a slash command count as uses of one skill", func(t *testing.T) {
@@ -489,3 +556,4 @@ func TestReportFindings(t *testing.T) {
 		t.Errorf("ModelName = %q", ModelName("claude-haiku-4-5-20251001"))
 	}
 }
+

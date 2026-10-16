@@ -501,7 +501,7 @@ func (f *File) toolResult(day string, b contentBlock, lineLen int) {
 		name = "?"
 	}
 	delete(f.Pending, b.ToolUseID)
-	size := len(b.Content)
+	size := resultChars(b.Content)
 	if size > lineLen {
 		size = lineLen
 	}
@@ -517,6 +517,27 @@ func (f *File) toolResult(day string, b contentBlock, lineLen int) {
 	if size >= BigResultBytes {
 		f.addBig(BigResult{Day: day, Tool: name, Input: p.Input, Bytes: size})
 	}
+}
+
+// resultChars is the text a tool result adds to the context. Image blocks are
+// left out: an image costs tokens by its pixels, ~1.6K at most, while its
+// base64 runs to hundreds of thousands of characters, which made screenshots
+// four in five of all large results.
+func resultChars(raw json.RawMessage) int {
+	if len(raw) == 0 || raw[0] != '[' {
+		return len(raw)
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return len(raw)
+	}
+	n := 0
+	for _, b := range blocks {
+		n += len(b.Text)
+	}
+	return n
 }
 
 func (f *File) addBig(r BigResult) {

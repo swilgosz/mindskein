@@ -289,7 +289,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 	r.Findings = findings(r, inv, uses90, hookErrors, big, listing, turns, bigTurns)
 	r.HistoryDays = historyDays(records, now)
 	if r.HistoryDays < UnusedDays {
-		caveat := fmt.Sprintf("Recorded history covers only %d days, so this counts as unused anything not used in those days. Run `mindskein usage --backfill` to judge the full %d.", r.HistoryDays, UnusedDays)
+		caveat := fmt.Sprintf("Recorded history covers only %d days, so this counts as unused anything not used in those days. `mindskein usage --backfill` adds transcripts still on disk, but Claude Code deletes older ones per `cleanupPeriodDays`; from here on the store keeps every session, so the full %d days fill in as you work.", r.HistoryDays, UnusedDays)
 		for i := range r.Findings {
 			if strings.Contains(r.Findings[i].Title, "in 90 days") {
 				r.Findings[i].Severity = Warning
@@ -383,7 +383,7 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 		worst := 0
 		var parts []string
 		for root, tok := range perRoot {
-			parts = append(parts, fmt.Sprintf("≈%d in %s", tok, root))
+			parts = append(parts, fmt.Sprintf("≈%d tokens in %s", tok, root))
 			worst = max(worst, tok)
 		}
 		sort.Strings(parts)
@@ -398,7 +398,7 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 		}
 		out = append(out, Finding{Severity: sev,
 			Title:    fmt.Sprintf("%d skills and commands unused in %d days", len(unusedSkills), UnusedDays),
-			Advice:   "Their names and descriptions load into every session's skill listing (" + strings.Join(parts, ", ") + " tokens). Archive what you don't use, or disable whole plugins.",
+			Advice:   "Their names and descriptions load into every session's skill listing (" + strings.Join(parts, ", ") + "). Archive what you don't use, or disable whole plugins.",
 			Saving:   fmt.Sprintf("≈%d tokens/session", worst),
 			Evidence: ev})
 	}
