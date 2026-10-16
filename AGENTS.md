@@ -16,6 +16,7 @@ This repo holds what dies with the code: implementation, tests, CI.
 **Inline comments are minimal, and only where absolutely necessary.**
 
 - **Never reference the planning system in code** — no task or unit numbers, no phase names, no "implemented by …", no roadmap milestones. That belongs in the PR description and the vault.
+- **Never reference the PKM vault's notes in comments** — no note names, no paths into it, no "the real plan". The repo is public and the vault is private: a comment that needs the author's notes open explains nothing to anyone else. State the fact the note taught you instead.
 - **No status or placeholder comments.** If something is not built, do not describe who will build it. An empty package needs a sentence on what it is for only.
 - **Prefer a name over a comment.** Delete any comment that restates the code.
 - **Comment only what the code cannot say**: a non-obvious constraint, a measured trade-off, or a correctness trap someone would otherwise reintroduce. Those are worth a sentence, and worth keeping accurate.

@@ -1,8 +1,8 @@
 // Package text holds the column helpers the renderers share.
 //
-// Both count runes rather than bytes: the plan and the session titles are
-// written in two languages, and byte arithmetic on them has already produced an
-// invalid UTF-8 truncation. Column width itself needs no helper — fmt measures
+// Both count runes rather than bytes: priority lines and session titles are not
+// ASCII, and byte arithmetic on them has already produced an invalid UTF-8
+// truncation. Column width itself needs no helper — fmt measures
 // a %s width in runes, verified rather than assumed.
 package text
 

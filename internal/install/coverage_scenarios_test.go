@@ -64,8 +64,8 @@ func TestEnsureConfig(t *testing.T) {
 
 	t.Run("the starter parses and claims nothing", func(t *testing.T) {
 		// A starter that fails to load would break the first run of every
-		// command; one that sets a vault path would point at a note that is
-		// not there.
+		// command; one that sets a priorities file would point at a file that
+		// is not there.
 		path := filepath.Join(t.TempDir(), "config.toml")
 		if _, err := EnsureConfig(path); err != nil {
 			t.Fatalf("EnsureConfig: %v", err)

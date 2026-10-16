@@ -440,8 +440,8 @@ func TestSeparatorsAStrangerWouldType(t *testing.T) {
 	})
 
 	t.Run("prefers the em dash when a line carries both", func(t *testing.T) {
-		// Otherwise the vault's own entries would split at the first hyphen in
-		// a project name rather than at the separator.
+		// Otherwise a project name with a spaced hyphen in it would split there
+		// rather than at the separator.
 		item := one(t, "- [ ] !1 automateideasai.com - AI builders campaign — 4 defects live")
 		if item.Label != "automateideasai.com - AI builders campaign" {
 			t.Errorf("label = %q", item.Label)

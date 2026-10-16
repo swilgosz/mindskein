@@ -4,7 +4,7 @@
 // One file per session, in a central store. Central because the hooks are
 // global, so cwd is any directory Claude is launched in — writing there would
 // put an untracked file in git repos, copy typed prose into employer
-// repositories, and drop stray notes into vault folders. Per session because
+// repositories, and drop stray files into notes folders. Per session because
 // Stop fires every turn and two sessions in one folder is the normal working
 // pattern; a shared file would have them overwriting each other.
 package handoff
