@@ -1,6 +1,6 @@
 // Package brief composes the morning brief from the blocks the other packages
-// render: priorities from plan.md, live sessions from the registry, and the
-// last handoff per workstream.
+// render: priorities from the priorities file, live sessions from the
+// registry, and the last handoff per workstream.
 //
 // It renders none of them itself. The package that owns a record owns
 // presenting it, so what is left here is the composition — the order, the

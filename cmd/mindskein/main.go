@@ -78,7 +78,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
 			return cmdStatus(args, stdout, stderr)
 		}},
-		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
+		{"priorities", "print the !1/!2 lines in your priorities file", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
@@ -136,8 +136,8 @@ func usage(w io.Writer, commands []command) {
 // is running, and where each thread was left.
 //
 // The three sections come from three independent sources, so each is composed
-// as a section rather than rendered inline: an unreadable plan or an
-// unreachable store costs one line of explanation, not the other two blocks.
+// as a section rather than rendered inline: an unreadable priorities file or
+// an unreachable store costs one line of explanation, not the other two blocks.
 func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	cfg, cfgErr := loadConfig()
 	hideAfter := cfg.Status.HideAfter
@@ -180,8 +180,8 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 // cmdPriorities prints the PRIORITIES block: what the configured note calls the
 // current focus, and what is queued behind it.
 //
-// Every way of having nothing to show — no config, no plan file, no priority
-// lines in it — prints the section with one line saying which, because a
+// Every way of having nothing to show — no config, no priorities file, no
+// priority lines in it — prints the section with one line saying which, because a
 // morning brief that stack-traces is worse than one that is briefly empty.
 func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 	cfg, cfgErr := loadConfig()
@@ -212,7 +212,7 @@ func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
 	}
 	plan, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return priorities.Hint(w, "no plan at "+path)
+		return priorities.Hint(w, "no priorities file at "+path)
 	}
 	if err != nil {
 		return err

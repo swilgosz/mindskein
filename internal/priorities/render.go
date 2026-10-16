@@ -100,7 +100,7 @@ func Render(w io.Writer, plan Plan, opts RenderOptions) error {
 }
 
 // Hint writes the block with one explanatory line in place of the list. Every
-// way of having no priorities to show — no config, no plan file, nothing at
+// way of having no priorities to show — no config, no priorities file, nothing at
 // !1 or !2 — is a state to report, not an error to fail on.
 func Hint(w io.Writer, hint string) error {
 	if _, err := fmt.Fprintln(w, Heading); err != nil {
@@ -115,7 +115,7 @@ func Hint(w io.Writer, hint string) error {
 // another convention parses to nothing, and "nothing found" reads as either a
 // broken tool or a free morning, when in fact it is neither.
 func emptyReason(plan Plan, levels []Level) string {
-	name := "the plan"
+	name := "the priorities file"
 	if plan.Source != "" {
 		name = filepath.Base(plan.Source)
 	}

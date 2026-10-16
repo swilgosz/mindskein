@@ -581,7 +581,7 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
 			t.Fatalf("run(priorities) = %v, want nil, not a stack trace", err)
 		}
-		if !strings.Contains(stdout.String(), "no plan at") {
+		if !strings.Contains(stdout.String(), "no priorities file at") {
 			t.Errorf("stdout = %q, want the missing path named", stdout.String())
 		}
 	})

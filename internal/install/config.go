@@ -17,7 +17,7 @@ const starterConfig = `# mindskein configuration.
 
 # [priorities]
 # The note holding your !1/!2 priority lines. Absolute, or a leading ~.
-# file = "/Users/you/Notes/plan.md"
+# file = "/Users/you/Notes/PRIORITIES.md"
 
 # [status]
 # Sessions quiet for longer than this drop out of the listing. 0 shows all.

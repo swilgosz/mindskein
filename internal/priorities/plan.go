@@ -1,6 +1,6 @@
-// Package priorities parses the !1 and !2 checkbox lines out of the vault's
-// plan.md, resolving Obsidian wikilinks to readable labels and truncating the
-// long trailing status prose.
+// Package priorities parses the !1 and !2 checkbox lines out of a priorities
+// file, resolving Obsidian wikilinks to readable labels and truncating the long
+// trailing status prose.
 package priorities
 
 import (
@@ -53,8 +53,8 @@ type Plan struct {
 }
 
 // itemPattern matches a priority line: a checkbox, then the level token. Both
-// halves are required, because plan.md is prose — it carries checkboxes with no
-// priority and priorities with no checkbox (a legend table explaining the
+// halves are required, because the file is prose — it carries checkboxes with
+// no priority and priorities with no checkbox (a legend table explaining the
 // convention), and neither is work.
 var itemPattern = regexp.MustCompile(`^[-*+]\s+\[([ xX])\]\s+!([123])\s+(.*)$`)
 
