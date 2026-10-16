@@ -38,47 +38,78 @@ type RenderOptions struct {
 	NoteWidth int
 }
 
-// Render writes the PRIORITIES block: the whole of `mindskein priorities`, and
-// one of the three sections of the morning brief.
-func Render(w io.Writer, list List, opts RenderOptions) error {
-	items := list.Items
+// Row is one priority as the block shows it, before any width applies.
+type Row struct {
+	Level Level  `json:"level"`
+	Label string `json:"label"`
+	Note  string `json:"note,omitempty"`
+}
+
+// View is the PRIORITIES block decided but not yet printed.
+type View struct {
+	Rows []Row `json:"rows"`
+
+	// Hidden counts open items at levels not shown.
+	Hidden int `json:"hidden"`
+
+	// Hint stands in for the rows when there are none.
+	Hint string `json:"hint,omitempty"`
+}
+
+// BuildView picks the open items at the levels shown, in level order.
+func BuildView(list List, opts RenderOptions) View {
 	levels := opts.Levels
 	if len(levels) == 0 {
 		levels = Shown
 	}
-	width := opts.NoteWidth
-	if width == 0 {
-		width = maxNoteWidth
-	}
-
-	type row struct{ level, label, note string }
-	var rows []row
-	labelW, hidden := 0, 0
-
+	var v View
 	for _, level := range levels {
-		first := true
-		for _, item := range items {
-			if item.Level != level || item.Done {
-				continue
+		for _, item := range list.Items {
+			if item.Level == level && !item.Done {
+				v.Rows = append(v.Rows, Row{Level: level, Label: item.Label, Note: item.Note})
 			}
-			label := text.Truncate(item.Label, maxLabelWidth)
-			labelW = max(labelW, len([]rune(label)))
-			marker := ""
-			if first {
-				marker, first = level.String(), false
-			}
-			rows = append(rows, row{marker, label, text.Summarize(item.Note, width)})
 		}
 	}
-	for _, item := range items {
+	for _, item := range list.Items {
 		if !item.Done && !shows(levels, item.Level) {
-			hidden++
+			v.Hidden++
 		}
+	}
+	if len(v.Rows) == 0 {
+		v.Hint = emptyReason(list, levels)
+	}
+	return v
+}
+
+// Render writes the PRIORITIES block: the whole of `mindskein priorities`, and
+// one of the three sections of the morning brief.
+func Render(w io.Writer, list List, opts RenderOptions) error {
+	return Print(w, BuildView(list, opts), opts.NoteWidth)
+}
+
+// Print writes a view as the terminal shows it. A zero noteWidth uses the
+// default.
+func Print(w io.Writer, v View, noteWidth int) error {
+	if noteWidth == 0 {
+		noteWidth = maxNoteWidth
+	}
+	if v.Hint != "" {
+		return Hint(w, v.Hint)
 	}
 
-	if len(rows) == 0 {
-		return Hint(w, emptyReason(list, levels))
+	type cells struct{ level, label, note string }
+	rows := make([]cells, len(v.Rows))
+	labelW := 0
+	for i, r := range v.Rows {
+		marker := ""
+		if i == 0 || v.Rows[i-1].Level != r.Level {
+			marker = r.Level.String()
+		}
+		label := text.Truncate(r.Label, maxLabelWidth)
+		labelW = max(labelW, len([]rune(label)))
+		rows[i] = cells{marker, label, text.Summarize(r.Note, noteWidth)}
 	}
+
 	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
 	}
@@ -91,8 +122,8 @@ func Render(w io.Writer, list List, opts RenderOptions) error {
 	}
 	// A list that silently ends at !2 reads like the whole file; say what was
 	// left out, as the sessions block does.
-	if hidden > 0 {
-		if _, err := fmt.Fprintf(w, "\n  %d more in the backlog (--all)\n", hidden); err != nil {
+	if v.Hidden > 0 {
+		if _, err := fmt.Fprintf(w, "\n  %d more in the backlog (--all)\n", v.Hidden); err != nil {
 			return err
 		}
 	}
