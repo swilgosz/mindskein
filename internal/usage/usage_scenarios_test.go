@@ -358,6 +358,31 @@ func TestReport(t *testing.T) {
 		}
 	})
 
+	t.Run("two accounts are reported together and can be read one at a time", func(t *testing.T) {
+		work, personal := skillRoot(t), skillRoot(t)
+		a := summarise(t, assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		b := summarise(t, assistant(t, "2026-10-15T11:00:00Z", "msg_1", "claude-opus-5-5", 5))
+		recs := []*Record{sessionRecord(work, a), sessionRecord(personal, b)}
+		recs[1].SessionID = "sess0002"
+		invs := []Inventory{Scan(work, nil), Scan(personal, nil)}
+
+		all := Build(recs, invs, now, 30, warsaw)
+		if all.Sessions != 2 || len(all.Accounts) != 2 {
+			t.Fatalf("combined: %d sessions, accounts %+v", all.Sessions, all.Accounts)
+		}
+		var out bytes.Buffer
+		Render(&out, all, false)
+		if !strings.Contains(out.String(), "accounts") {
+			t.Errorf("a two-account report names both accounts:\n%s", out.String())
+		}
+
+		rs, is := ForRoot(recs, invs, personal)
+		one := Build(rs, is, now, 30, warsaw)
+		if one.Sessions != 1 || len(one.Accounts) != 1 || one.Accounts[0].Name != personal || len(one.Inventory) != 1 {
+			t.Errorf("one account: %d sessions, accounts %+v, %d inventories", one.Sessions, one.Accounts, len(one.Inventory))
+		}
+	})
+
 	t.Run("an empty usage store says how to fill it, rather than printing a report of zeroes", func(t *testing.T) {
 		var out bytes.Buffer
 		if err := Render(&out, Build(nil, nil, now, 30, warsaw), false); err != nil {

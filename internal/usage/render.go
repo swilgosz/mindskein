@@ -32,6 +32,9 @@ func Render(w io.Writer, r *Report, all bool) error {
 	p.line(fmt.Sprintf("  spend      cache read %s · cache write %s · output %s · input %s",
 		money(r.Cost.CacheRead), money(r.Cost.CacheWrite), money(r.Cost.Output), money(r.Cost.Input)))
 	p.line("  models     " + spendList(r.Models, 4))
+	if len(r.Accounts) > 1 {
+		p.line("  accounts   " + Tilde(spendList(r.Accounts, 4)))
+	}
 	p.line("  where      " + spendList(r.Workstreams, 4))
 	p.line(fmt.Sprintf("  friction   %d interrupts · %d denials · %d compactions · %d hook errors",
 		r.Events[EventInterrupts], r.Events[EventDenials],

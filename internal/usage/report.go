@@ -86,6 +86,7 @@ type Report struct {
 	SubCost  float64 `json:"subagent_cost"`
 
 	Models      []Spend        `json:"models"`
+	Accounts    []Spend        `json:"accounts"`
 	Workstreams []Spend        `json:"workstreams"`
 	Agents      []Spend        `json:"agents"`
 	Tools       []ToolRow      `json:"tools"`
@@ -113,6 +114,24 @@ func historyDays(records []*Record, now time.Time) int {
 	return int(now.Sub(first).Hours()/24) + 1
 }
 
+// ForRoot keeps only the records and inventory of one config root, so a
+// report can be read per account.
+func ForRoot(records []*Record, inv []Inventory, root string) ([]*Record, []Inventory) {
+	var rs []*Record
+	for _, r := range records {
+		if r.Root == root {
+			rs = append(rs, r)
+		}
+	}
+	var is []Inventory
+	for _, i := range inv {
+		if i.Root == root {
+			is = append(is, i)
+		}
+	}
+	return rs, is
+}
+
 // Build aggregates records over the last days (0 means all time) and judges
 // them against the inventory.
 func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *time.Location) *Report {
@@ -130,6 +149,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 
 	models := map[string]*Spend{}
 	repos := map[string]*Spend{}
+	accounts := map[string]*Spend{}
 	agents := map[string]*Spend{}
 	tools := map[string]*ToolStat{}
 	hookErrors := map[string]int{}
@@ -180,6 +200,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 					r.Cost.add(c)
 					addSpend(models, ModelName(model), c.Total(), t)
 					addSpend(repos, orUnknown(rec.Repo), c.Total(), t)
+					addSpend(accounts, orUnknown(rec.Root), c.Total(), t)
 					agent := x.agent
 					if agent == "" {
 						agent = "(main session)"
@@ -254,6 +275,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 	}
 	r.Models = ranked(models, total)
 	r.Workstreams = ranked(repos, total)
+	r.Accounts = ranked(accounts, total)
 	r.Agents = ranked(agents, total)
 	for name, s := range tools {
 		r.Tools = append(r.Tools, ToolRow{Name: name, ToolStat: *s})
