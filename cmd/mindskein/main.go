@@ -149,6 +149,7 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("brief", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	all := fs.Bool("all", false, "widen every section: the backlog, ended sessions, every workstream")
+	asJSON := fs.Bool("json", false, "print the brief as JSON")
 	fs.Var(&hideAfter, "hide-after", "hide sessions quiet for longer than this (0 keeps every one)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -160,25 +161,93 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
 	}
 
-	// Read once and use twice: the same handoffs name the sessions and fill
-	// the last section. A failure here is not fatal to either — the sessions
-	// block falls back to folder names, and the last section explains itself.
-	handoffs, handoffErr := loadHandoffs()
-
+	b := buildBrief(cfg, *all, hideAfter.Duration(), time.Now().UTC())
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(b)
+	}
 	return brief.Render(stdout,
 		brief.Section{Heading: priorities.Heading, Render: func(w io.Writer) error {
-			return renderPriorities(w, cfg, *all)
+			if b.Priorities.Error != "" {
+				return errors.New(b.Priorities.Error)
+			}
+			return priorities.Print(w, b.Priorities.View, 0)
 		}},
 		brief.Section{Heading: session.Heading, Render: func(w io.Writer) error {
-			return renderSessions(w, labelsFrom(handoffs), *all, hideAfter.Duration())
+			if b.Sessions.Error != "" {
+				return errors.New(b.Sessions.Error)
+			}
+			return session.Print(w, b.Sessions.View)
 		}},
 		brief.Section{Heading: handoff.Heading, Render: func(w io.Writer) error {
-			if handoffErr != nil {
-				return handoffErr
+			if b.Handoffs.Error != "" {
+				return errors.New(b.Handoffs.Error)
 			}
-			return handoff.Render(w, handoffs, handoff.RenderOptions{ShowAll: *all})
+			return handoff.Print(w, b.Handoffs.View)
 		}},
 	)
+}
+
+// briefReport is the brief decided but not printed. The terminal and the JSON
+// both print it, so they cannot disagree about a row.
+//
+// The three blocks come from three independent sources, so each carries its
+// own error: an unreadable priorities file or an unreachable store costs one
+// line of explanation, not the other two blocks.
+type briefReport struct {
+	GeneratedAt time.Time       `json:"generated_at"`
+	Priorities  prioritiesBlock `json:"priorities"`
+	Sessions    sessionsBlock   `json:"sessions"`
+	Handoffs    handoffsBlock   `json:"handoffs"`
+}
+
+type prioritiesBlock struct {
+	Heading string `json:"heading"`
+	Error   string `json:"error,omitempty"`
+	priorities.View
+}
+
+type sessionsBlock struct {
+	Heading string `json:"heading"`
+	Error   string `json:"error,omitempty"`
+	session.View
+}
+
+type handoffsBlock struct {
+	Heading string `json:"heading"`
+	Error   string `json:"error,omitempty"`
+	handoff.View
+}
+
+func buildBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.Time) briefReport {
+	b := briefReport{
+		GeneratedAt: now,
+		Priorities:  prioritiesBlock{Heading: priorities.Heading},
+		Sessions:    sessionsBlock{Heading: session.Heading},
+		Handoffs:    handoffsBlock{Heading: handoff.Heading},
+	}
+	if v, err := priorityView(cfg, all); err != nil {
+		b.Priorities.Error = err.Error()
+	} else {
+		b.Priorities.View = v
+	}
+
+	// Read once and use twice: the same handoffs name the sessions and fill
+	// the last block. A failure here is not fatal to either — the sessions
+	// block falls back to folder names, and the last block explains itself.
+	handoffs, handoffErr := loadHandoffs()
+	if v, err := sessionView(labelsFrom(handoffs), all, hideAfter, now); err != nil {
+		b.Sessions.Error = err.Error()
+	} else {
+		b.Sessions.View = v
+	}
+	if handoffErr != nil {
+		b.Handoffs.Error = handoffErr.Error()
+	} else {
+		b.Handoffs.View = handoff.BuildView(handoffs, handoff.RenderOptions{ShowAll: all})
+	}
+	return b
 }
 
 // cmdPriorities prints the PRIORITIES block: what the configured note calls the
@@ -206,27 +275,38 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 	return renderPriorities(stdout, cfg, *all)
 }
 
-// renderPriorities is the PRIORITIES block, shared by the brief and by the
-// command that prints it alone.
+// renderPriorities is the PRIORITIES block printed alone.
 func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
+	v, err := priorityView(cfg, all)
+	if err != nil {
+		return err
+	}
+	return priorities.Print(w, v, 0)
+}
+
+// priorityView is the PRIORITIES block decided, shared by the brief and by the
+// command that prints it alone.
+//
+// Every way of having nothing to show — no config, no priorities file — is a
+// hint in place of the rows, not an error.
+func priorityView(cfg config.Config, all bool) (priorities.View, error) {
 	path := cfg.Priorities.Path()
 	if path == "" {
-		return priorities.Hint(w,
-			"no priorities file configured — set priorities.file in "+configFile())
+		return priorities.View{Hint: "no priorities file configured — set priorities.file in " + configFile()}, nil
 	}
 	list, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return priorities.Hint(w, "no priorities file at "+path)
+		return priorities.View{Hint: "no priorities file at " + path}, nil
 	}
 	if err != nil {
-		return err
+		return priorities.View{}, err
 	}
 
 	levels := priorities.Shown
 	if all {
 		levels = priorities.All
 	}
-	return priorities.Render(w, list, priorities.RenderOptions{Levels: levels})
+	return priorities.BuildView(list, priorities.RenderOptions{Levels: levels}), nil
 }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and
@@ -256,23 +336,32 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	return renderSessions(stdout, sessionLabels(), *all, hideAfter.Duration())
 }
 
-// renderSessions is the LIVE SESSIONS block, shared by the brief and by the
-// command that prints it alone.
+// renderSessions is the LIVE SESSIONS block printed alone.
 func renderSessions(w io.Writer, labels map[string]string, all bool, hideAfter time.Duration) error {
-	store, err := session.DefaultStore()
+	v, err := sessionView(labels, all, hideAfter, time.Now().UTC())
 	if err != nil {
 		return err
+	}
+	return session.Print(w, v)
+}
+
+// sessionView is the LIVE SESSIONS block decided, shared by the brief and by
+// the command that prints it alone.
+func sessionView(labels map[string]string, all bool, hideAfter time.Duration, now time.Time) (session.View, error) {
+	store, err := session.DefaultStore()
+	if err != nil {
+		return session.View{}, err
 	}
 	sessions, err := store.List()
 	if err != nil {
-		return err
+		return session.View{}, err
 	}
-	return session.Render(w, sessions, time.Now().UTC(), session.RenderOptions{
+	return session.BuildView(sessions, now, session.RenderOptions{
 		Labels:    labels,
 		ShowAll:   all,
 		HideAfter: hideAfter,
 		Probe:     session.SystemProbe(),
-	})
+	}), nil
 }
 
 // loadConfig reads ~/.mindskein/config.toml, which sits beside the session
