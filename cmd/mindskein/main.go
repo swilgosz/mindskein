@@ -210,7 +210,7 @@ func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
 		return priorities.Hint(w,
 			"no priorities file configured — set priorities.file in "+configFile())
 	}
-	plan, err := priorities.ParseFile(path)
+	list, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return priorities.Hint(w, "no priorities file at "+path)
 	}
@@ -222,7 +222,7 @@ func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
 	if all {
 		levels = priorities.All
 	}
-	return priorities.Render(w, plan, priorities.RenderOptions{Levels: levels})
+	return priorities.Render(w, list, priorities.RenderOptions{Levels: levels})
 }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and

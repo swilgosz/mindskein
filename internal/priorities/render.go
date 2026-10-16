@@ -40,8 +40,8 @@ type RenderOptions struct {
 
 // Render writes the PRIORITIES block: the whole of `mindskein priorities`, and
 // one of the three sections of the morning brief.
-func Render(w io.Writer, plan Plan, opts RenderOptions) error {
-	items := plan.Items
+func Render(w io.Writer, list List, opts RenderOptions) error {
+	items := list.Items
 	levels := opts.Levels
 	if len(levels) == 0 {
 		levels = Shown
@@ -77,7 +77,7 @@ func Render(w io.Writer, plan Plan, opts RenderOptions) error {
 	}
 
 	if len(rows) == 0 {
-		return Hint(w, emptyReason(plan, levels))
+		return Hint(w, emptyReason(list, levels))
 	}
 	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
@@ -89,7 +89,7 @@ func Render(w io.Writer, plan Plan, opts RenderOptions) error {
 			return err
 		}
 	}
-	// A list that silently ends at !2 reads like the whole plan; say what was
+	// A list that silently ends at !2 reads like the whole file; say what was
 	// left out, as the sessions block does.
 	if hidden > 0 {
 		if _, err := fmt.Fprintf(w, "\n  %d more in the backlog (--all)\n", hidden); err != nil {
@@ -114,22 +114,22 @@ func Hint(w io.Writer, hint string) error {
 // different reactions. The one that matters is the third: a file written to
 // another convention parses to nothing, and "nothing found" reads as either a
 // broken tool or a free morning, when in fact it is neither.
-func emptyReason(plan Plan, levels []Level) string {
+func emptyReason(list List, levels []Level) string {
 	name := "the priorities file"
-	if plan.Source != "" {
-		name = filepath.Base(plan.Source)
+	if list.Source != "" {
+		name = filepath.Base(list.Source)
 	}
 
-	if len(plan.Items) == 0 {
-		if plan.Checkboxes == 0 {
+	if len(list.Items) == 0 {
+		if list.Checkboxes == 0 {
 			return "no checkboxes in " + name + " — is that the right file?"
 		}
 		return fmt.Sprintf("read %s in %s, none tagged !1/!2/!3 — a priority looks like:  - [ ] !1 Ship the thing - why it matters",
-			count(plan.Checkboxes, "checkbox", "checkboxes"), name)
+			count(list.Checkboxes, "checkbox", "checkboxes"), name)
 	}
 
 	backlog, done := 0, 0
-	for _, item := range plan.Items {
+	for _, item := range list.Items {
 		switch {
 		case item.Done && shows(levels, item.Level):
 			done++

@@ -24,22 +24,22 @@ func priorities(t *testing.T, body string) (Config, error) {
 // a quiet day.
 func TestPrioritiesConfiguration(t *testing.T) {
 	t.Run("reads an absolute file path", func(t *testing.T) {
-		cfg, err := priorities(t, "[priorities]\nfile = \"/notes/plan.md\"\n")
+		cfg, err := priorities(t, "[priorities]\nfile = \"/notes/PRIORITIES.md\"\n")
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got := cfg.Priorities.Path(); got != "/notes/plan.md" {
-			t.Errorf("Path() = %q, want /notes/plan.md", got)
+		if got := cfg.Priorities.Path(); got != "/notes/PRIORITIES.md" {
+			t.Errorf("Path() = %q, want /notes/PRIORITIES.md", got)
 		}
 	})
 
 	t.Run("expands a leading tilde", func(t *testing.T) {
-		cfg, err := priorities(t, "[priorities]\nfile = \"~/notes/plan.md\"\n")
+		cfg, err := priorities(t, "[priorities]\nfile = \"~/notes/PRIORITIES.md\"\n")
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		home, _ := os.UserHomeDir()
-		want := filepath.Join(home, "notes/plan.md")
+		want := filepath.Join(home, "notes/PRIORITIES.md")
 		if got := cfg.Priorities.Path(); got != want {
 			t.Errorf("Path() = %q, want %q", got, want)
 		}
@@ -59,7 +59,7 @@ func TestPrioritiesConfiguration(t *testing.T) {
 	// gone, and the app is launched from a GUI as often as from a shell, so
 	// the working directory is not a defensible answer.
 	t.Run("a relative path is rejected by name", func(t *testing.T) {
-		_, err := priorities(t, "[priorities]\nfile = \"notes/plan.md\"\n")
+		_, err := priorities(t, "[priorities]\nfile = \"notes/PRIORITIES.md\"\n")
 		if err == nil {
 			t.Fatal("Load: want an error for a relative path")
 		}

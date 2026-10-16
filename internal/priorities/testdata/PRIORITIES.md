@@ -4,7 +4,7 @@ tags:
   - 🗺️
 ---
 
-# PLAN — the road somewhere
+# PRIORITIES — the road somewhere
 
 ## Priorities
 

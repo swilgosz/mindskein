@@ -39,10 +39,10 @@ func TestBrief(t *testing.T) {
 
 	t.Run("a section that fails prints its heading and one hint line", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := Render(&buf, failing("TWO", "no plan configured")); err != nil {
+		if err := Render(&buf, failing("TWO", "no priorities file configured")); err != nil {
 			t.Fatalf("Render() = %v, want nil", err)
 		}
-		want := "TWO\n  no plan configured\n"
+		want := "TWO\n  no priorities file configured\n"
 		if buf.String() != want {
 			t.Errorf("output = %q, want %q", buf.String(), want)
 		}

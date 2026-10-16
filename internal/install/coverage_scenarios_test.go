@@ -45,7 +45,7 @@ func TestEnsureConfig(t *testing.T) {
 
 	t.Run("never overwrites an existing config", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.toml")
-		const mine = "[priorities]\nfile = \"/Users/me/Notes/plan.md\"\n"
+		const mine = "[priorities]\nfile = \"/Users/me/Notes/PRIORITIES.md\"\n"
 		if err := os.WriteFile(path, []byte(mine), 0o600); err != nil {
 			t.Fatal(err)
 		}
