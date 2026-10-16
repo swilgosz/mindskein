@@ -147,6 +147,7 @@ which is far longer than anything this should ever need.
 mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the plan only
+mindskein usage         # token spend and what to improve in your setup
 mindskein prune         # delete state past the retention horizon
 mindskein init          # register the hooks; --uninstall removes them
 ```
@@ -157,6 +158,27 @@ aged out, and every workstream rather than the newest few.
 Set `MINDSKEIN_PROJECT` before launching Claude to name a workstream that spans
 several folders and sessions. It is the only grouping key that does.
 
+### Usage
+
+`mindskein usage` reports the last 30 days: API-equivalent cost by model and
+workstream, cache hit rate, friction (interrupts, denials, compactions, hook
+errors), then **FIX FIRST** — failing hooks, skills and MCP servers unused in
+90 days and what they cost every session, context bloat, oversized tool
+results, subagents on top-tier models, heavy instruction files.
+
+The `Stop` hook keeps it current, reading only what each turn appended. For
+sessions from before the hooks were installed, run once:
+
+```sh
+mindskein usage --backfill            # ~/.claude and $CLAUDE_CONFIG_DIR
+mindskein usage --backfill ~/.claude-personal
+```
+
+`--days N` changes the range (`0` is all time), `--all` prints every finding,
+and `--json` prints the report as the machine-readable contract other surfaces
+read. Costs use API list prices: on a subscription they are the value consumed,
+not the bill.
+
 ## What it stores, and where
 
 ```
@@ -164,6 +186,7 @@ several folders and sessions. It is the only grouping key that does.
   config.toml       you write this; the app never rewrites it
   sessions/         one JSON file per session — id, folder, status, last tool
   handoffs/         one markdown file per session — title, times, last prompt
+  usage/            one JSON file per session — token counts, tool and skill use
   hooks.log         appended to only when a hook fails
 ```
 

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/brief"
@@ -22,6 +24,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
 	"github.com/swilgosz/mindskein/internal/text"
+	insight "github.com/swilgosz/mindskein/internal/usage"
 )
 
 // version is overridden at build time with
@@ -86,6 +89,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}},
 		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
 			return cmdPrune(args, stdout, stderr)
+		}},
+		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
+			return cmdUsage(args, stdout, stderr)
 		}},
 		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
 			return cmdHook(args, stdin, stderr)
@@ -405,16 +411,15 @@ func handleHook(event hook.Event, stdin io.Reader) error {
 	if event != hook.EventStop {
 		return nil
 	}
-	if err := recordHandoff(sess, payload, now); err != nil {
-		return err
-	}
+	handoffErr := recordHandoff(sess, payload, now)
+	usageErr := recordUsage(payload)
 	cfg, err := loadConfig()
 	if err != nil {
 		// A broken config must not stop the sweep from running on defaults,
 		// the same way it does not stop the brief from printing.
 		cfg = config.Defaults()
 	}
-	return pruneDaily(cfg, now)
+	return errors.Join(handoffErr, usageErr, pruneDaily(cfg, now))
 }
 
 // recordHandoff writes the session handoff once a turn completes.
@@ -431,6 +436,21 @@ func recordHandoff(sess *session.Session, payload *hook.Payload, now time.Time) 
 	// folders and sessions — export it before launching Claude. Empty is the
 	// normal case, and the reader falls back to the session title.
 	_, err = handoff.Record(store, sess, payload.TranscriptPath, os.Getenv("MINDSKEIN_PROJECT"), now)
+	return err
+}
+
+// recordUsage brings the session's usage summary up to date. It reads only
+// what was appended since the last turn, so it stays cheap however long the
+// session runs.
+func recordUsage(payload *hook.Payload) error {
+	if payload.TranscriptPath == "" {
+		return nil
+	}
+	store, err := insight.DefaultStore()
+	if err != nil {
+		return err
+	}
+	_, err = store.Capture(payload.TranscriptPath)
 	return err
 }
 
@@ -643,4 +663,63 @@ func binaryPath() (string, error) {
 		return exe, nil
 	}
 	return resolved, nil
+}
+
+// cmdUsage reports spend and findings from the usage store. --backfill first
+// summarises transcripts the hooks never saw, from the default config roots
+// plus any named as arguments.
+func cmdUsage(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	days := fs.Int("days", 30, "report the last N days; 0 is all time")
+	all := fs.Bool("all", false, "print every finding and all of its evidence")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	backfill := fs.Bool("backfill", false, "summarise transcripts already on disk before reporting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := insight.DefaultStore()
+	if err != nil {
+		return err
+	}
+	if *backfill {
+		start := time.Now()
+		roots := store.Roots(fs.Args()...)
+		res, err := store.Backfill(roots)
+		fmt.Fprintf(stderr, "backfill: %d transcripts read, %d unchanged, %s, from %s\n",
+			res.Parsed, res.Skipped, time.Since(start).Round(time.Millisecond), strings.Join(roots, ", "))
+		if err != nil {
+			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
+		}
+	}
+	report, err := buildUsage(store, time.Now(), *days)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+	return insight.Render(stdout, report, *all)
+}
+
+func buildUsage(store *insight.Store, now time.Time, days int) (*insight.Report, error) {
+	records, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	cwds := map[string][]string{}
+	seen := map[string]bool{}
+	for _, r := range records {
+		if r.File.CWD != "" && !seen[r.Root+r.File.CWD] {
+			seen[r.Root+r.File.CWD] = true
+			cwds[r.Root] = append(cwds[r.Root], r.File.CWD)
+		}
+	}
+	var inv []insight.Inventory
+	for _, root := range store.Roots() {
+		inv = append(inv, insight.Scan(root, cwds[root]))
+	}
+	return insight.Build(records, inv, now, days, store.Loc), nil
 }
