@@ -91,6 +91,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
 			return cmdUsage(args, stdout, stderr)
 		}},
+		{"serve", "open the dashboard on 127.0.0.1: usage, overview, setup, health", func(args []string, _ io.Reader) error {
+			return cmdServe(args, stdout, stderr)
+		}},
 		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
 			return cmdHook(args, stdin, stderr)
 		}},

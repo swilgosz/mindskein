@@ -63,6 +63,26 @@ func (s *Severity) UnmarshalText(b []byte) error {
 	return fmt.Errorf("unknown severity %q", b)
 }
 
+// Count is one named tally.
+type Count struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+func counts(m map[string]int) []Count {
+	out := make([]Count, 0, len(m))
+	for k, v := range m {
+		out = append(out, Count{k, v})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
 // Finding is one thing worth fixing, with the evidence behind it.
 type Finding struct {
 	Severity Severity `json:"severity"`
@@ -95,6 +115,9 @@ type Report struct {
 	Findings    []Finding      `json:"findings"`
 
 	Inventory []Inventory `json:"inventory"`
+
+	// HookErrors counts each failing hook in the range, most failures first.
+	HookErrors []Count `json:"hook_errors"`
 
 	// HistoryDays is how far back the store reaches. Unused-item findings are
 	// only as good as it is long.
@@ -286,6 +309,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 		r.TopSessions = r.TopSessions[:20]
 	}
 
+	r.HookErrors = counts(hookErrors)
 	r.Findings = findings(r, inv, uses90, hookErrors, big, listing, turns, bigTurns)
 	r.HistoryDays = historyDays(records, now)
 	if r.HistoryDays < UnusedDays {

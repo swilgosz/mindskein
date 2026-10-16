@@ -694,3 +694,35 @@ func TestPrune(t *testing.T) {
 		}
 	})
 }
+
+func TestHealth(t *testing.T) {
+	t.Run("lists failing hooks with their counts, the hooks installed per root, always-loaded instruction files and MCP servers", func(t *testing.T) {
+		root := fullRoot(t)
+		failing := line(t, map[string]any{"type": "attachment", "timestamp": "2026-10-15T10:00:00Z", "attachment": map[string]any{
+			"type": "hook_non_blocking_error", "hookName": "SessionStart:startup", "command": "run-hook.cmd session-start"}})
+		f := summarise(t, assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5), failing, failing)
+		r := Build([]*Record{sessionRecord(root, f)}, []Inventory{Scan(root, nil)}, now, 30, warsaw)
+
+		h := HealthOf(r)
+		if len(h.HookErrors) != 1 || h.HookErrors[0].Name != "SessionStart:startup :: run-hook.cmd session-start" || h.HookErrors[0].Count != 2 {
+			t.Errorf("hook errors = %+v, want the one hook failing twice", h.HookErrors)
+		}
+		if len(h.Roots) != 1 || h.Roots[0].Root != root {
+			t.Fatalf("roots = %+v, want the one scanned", h.Roots)
+		}
+		rh := h.Roots[0]
+		if len(rh.Hooks) != 1 || rh.Hooks[0].Command != "notify" {
+			t.Errorf("hooks = %+v, want the Stop hook from settings.json", rh.Hooks)
+		}
+		if len(rh.Context) == 0 || !strings.HasSuffix(rh.Context[0].Path, "CLAUDE.md") {
+			t.Errorf("context = %+v, want the global CLAUDE.md", rh.Context)
+		}
+		names := map[string]bool{}
+		for _, m := range rh.MCP {
+			names[m.Name] = true
+		}
+		if !names["github"] || !names["slack"] {
+			t.Errorf("mcp = %+v, want the plugin's and the user's servers", rh.MCP)
+		}
+	})
+}
