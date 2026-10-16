@@ -1,16 +1,15 @@
-# The plan format
+# The priorities format
 
 `mindskein priorities` reads one markdown file and prints the priorities in it.
 The file is yours: any note, any editor, any folder scheme. Point at it in
 `~/.mindskein/config.toml`:
 
 ```toml
-[vault]
-path = "~/notes"                 # optional base; ~ expands
-plan = "plan.md"                 # relative to path, or absolute
+[priorities]
+file = "~/notes/PRIORITIES.md"   # absolute, or a leading ~
 ```
 
-Neither key has a default. A guessed layout is a guess about your filesystem,
+The key has no default. A guessed layout is a guess about your filesystem,
 and a wrong guess prints an empty list, which looks exactly like a quiet day.
 
 ## What counts as a priority
@@ -26,7 +25,7 @@ A checkbox **and** a level token:
 `!1` is what you are working on now, `!2` is next, `!3` is the backlog.
 `priorities` shows `!1` and `!2`; `--all` adds `!3`.
 
-Both halves are required because a plan is prose. The same tokens turn up in a
+Both halves are required because the file is prose. The same tokens turn up in a
 table explaining the convention, or in a fenced example of it — so fenced code
 blocks are skipped entirely, and a token without a checkbox is not work.
 
@@ -70,8 +69,8 @@ Each empty result says which kind of empty it is, because they want different
 reactions:
 
 ```
-no checkboxes in plan.md — is that the right file?
-read 3 checkboxes in plan.md, none tagged !1/!2/!3 — a priority looks like:  - [ ] !1 Ship the thing - why it matters
+no checkboxes in PRIORITIES.md — is that the right file?
+read 3 checkboxes in PRIORITIES.md, none tagged !1/!2/!3 — a priority looks like:  - [ ] !1 Ship the thing - why it matters
 nothing at !1 or !2 — 2 items further down (--all)
 nothing open at !1 or !2 — 2 items done
 ```

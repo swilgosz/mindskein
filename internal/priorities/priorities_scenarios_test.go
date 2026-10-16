@@ -8,11 +8,11 @@ import (
 	"unicode"
 )
 
-// plan is the fixture: a note shaped like the real one, down to the legend
-// table and the fenced example that make plan.md prose rather than a data file.
-func plan(t *testing.T) []Item {
+// fixture is a priorities file written as people write one, down to the
+// legend table and the fenced example that make it prose rather than data.
+func fixture(t *testing.T) []Item {
 	t.Helper()
-	parsed, err := ParseFile(filepath.Join("testdata", "plan.md"))
+	parsed, err := ParseFile(filepath.Join("testdata", "PRIORITIES.md"))
 	if err != nil {
 		t.Fatalf("ParseFile() = %v, want nil", err)
 	}
@@ -61,21 +61,22 @@ func one(t *testing.T, line string) Item {
 func render(t *testing.T, items []Item, opts RenderOptions) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Render(&buf, Plan{Items: items}, opts); err != nil {
+	if err := Render(&buf, List{Items: items}, opts); err != nil {
 		t.Fatalf("Render() = %v, want nil", err)
 	}
 	return buf.String()
 }
 
-// TestParsingPlan covers reading the priority lines out of the vault's plan.md.
+// TestParsingPriorities covers reading the priority lines out of a priorities
+// file.
 //
 // The file is a hand-written note, not a data format: the same tokens appear in
 // prose, in a legend table and in a fenced example of the convention itself, so
 // what is *not* a priority matters as much as what is.
-func TestParsingPlan(t *testing.T) {
-	items := plan(t)
+func TestParsingPriorities(t *testing.T) {
+	items := fixture(t)
 
-	t.Run("collects the !1 lines in the order the plan declares them", func(t *testing.T) {
+	t.Run("collects the !1 lines in the order the file declares them", func(t *testing.T) {
 		want := []string{"Wren Deploy Tool", "Publishing Calendar"}
 		if got := labels(items, Now); !equal(got, want) {
 			t.Errorf("!1 = %q, want %q", got, want)
@@ -215,7 +216,7 @@ func TestResolvingLabels(t *testing.T) {
 // TestTrimmingProse covers the trailing status paragraph. Real entries run to
 // several hundred characters of dated commentary; the brief has one line.
 func TestTrimmingProse(t *testing.T) {
-	items := plan(t)
+	items := fixture(t)
 
 	t.Run("splits the label from the note at the em dash", func(t *testing.T) {
 		item := find(t, items, "Publishing Calendar")
@@ -288,7 +289,7 @@ func TestTrimmingProse(t *testing.T) {
 // TestRenderingPriorities covers the PRIORITIES block: the whole of
 // `mindskein priorities`, and the first section of the morning brief.
 func TestRenderingPriorities(t *testing.T) {
-	items := plan(t)
+	items := fixture(t)
 
 	t.Run("prints one line per item, each group marked with its level", func(t *testing.T) {
 		out := render(t, items, RenderOptions{})
@@ -314,7 +315,7 @@ func TestRenderingPriorities(t *testing.T) {
 		if strings.Contains(out, "Dig Deeper") {
 			t.Errorf("the backlog should not be listed by default:\n%s", out)
 		}
-		// A list that silently ends at !2 reads like the whole plan.
+		// A list that silently ends at !2 reads like the whole file.
 		if !strings.Contains(out, "2 more in the backlog (--all)") {
 			t.Errorf("what was left out should be named:\n%s", out)
 		}
@@ -361,12 +362,12 @@ func TestRenderingPriorities(t *testing.T) {
 		}
 	})
 
-	t.Run("hints instead of failing when there is no plan to read", func(t *testing.T) {
+	t.Run("hints instead of failing when there is no file to read", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := Hint(&buf, "no plan configured"); err != nil {
+		if err := Hint(&buf, "no priorities file configured"); err != nil {
 			t.Fatalf("Hint() = %v, want nil", err)
 		}
-		if got := buf.String(); got != "PRIORITIES\n  no plan configured\n" {
+		if got := buf.String(); got != "PRIORITIES\n  no priorities file configured\n" {
 			t.Errorf("Hint() wrote %q", got)
 		}
 	})
@@ -469,7 +470,7 @@ func TestSeparatorsAStrangerWouldType(t *testing.T) {
 // at !1 or !2" — which reads as "this is broken", or worse, as "you have
 // nothing to do".
 func TestExplainingAnEmptyResult(t *testing.T) {
-	parsePlan := func(t *testing.T, body string) Plan {
+	parseList := func(t *testing.T, body string) List {
 		t.Helper()
 		p, err := Parse(strings.NewReader(body))
 		if err != nil {
@@ -477,7 +478,7 @@ func TestExplainingAnEmptyResult(t *testing.T) {
 		}
 		return p
 	}
-	show := func(t *testing.T, p Plan) string {
+	show := func(t *testing.T, p List) string {
 		t.Helper()
 		var buf bytes.Buffer
 		if err := Render(&buf, p, RenderOptions{}); err != nil {
@@ -487,7 +488,7 @@ func TestExplainingAnEmptyResult(t *testing.T) {
 	}
 
 	t.Run("counts the checkboxes it read when none carry a priority", func(t *testing.T) {
-		out := show(t, parsePlan(t, "# Tasks\n- [ ] p1 Fix the login bug\n- [ ] p1 Call the accountant\n- [ ] p2 README\n"))
+		out := show(t, parseList(t, "# Tasks\n- [ ] p1 Fix the login bug\n- [ ] p1 Call the accountant\n- [ ] p2 README\n"))
 		if !strings.Contains(out, "3 checkboxes") {
 			t.Errorf("the reader should learn the file was read: %q", out)
 		}
@@ -497,21 +498,21 @@ func TestExplainingAnEmptyResult(t *testing.T) {
 	})
 
 	t.Run("says the file has no checkboxes at all", func(t *testing.T) {
-		out := show(t, parsePlan(t, "# Notes\n\nSome prose, no tasks anywhere.\n"))
+		out := show(t, parseList(t, "# Notes\n\nSome prose, no tasks anywhere.\n"))
 		if !strings.Contains(out, "no checkboxes") {
 			t.Errorf("a file with no tasks is a different problem: %q", out)
 		}
 	})
 
 	t.Run("points at --all when everything sits in the backlog", func(t *testing.T) {
-		out := show(t, parsePlan(t, "- [ ] !3 Someday idea\n- [ ] !3 Another one\n"))
+		out := show(t, parseList(t, "- [ ] !3 Someday idea\n- [ ] !3 Another one\n"))
 		if !strings.Contains(out, "--all") || !strings.Contains(out, "2") {
 			t.Errorf("hidden work should be named, not silently absent: %q", out)
 		}
 	})
 
 	t.Run("says so when everything at the shown levels is done", func(t *testing.T) {
-		out := show(t, parsePlan(t, "- [x] !1 Shipped it\n- [x] !2 Also shipped\n"))
+		out := show(t, parseList(t, "- [x] !1 Shipped it\n- [x] !2 Also shipped\n"))
 		if !strings.Contains(out, "done") {
 			t.Errorf("an empty list because the work is finished is good news: %q", out)
 		}

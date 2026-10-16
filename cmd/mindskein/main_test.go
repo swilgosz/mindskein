@@ -520,21 +520,21 @@ func TestStatusRetentionHorizon(t *testing.T) {
 	})
 }
 
-// TestRunPrioritiesReadsThePlan checks the command wiring: config to plan file
-// to output. The parsing and rendering themselves are covered in
+// TestRunPrioritiesReadsTheFile checks the command wiring: config to priorities
+// file to output. The parsing and rendering themselves are covered in
 // internal/priorities.
-func TestRunPrioritiesReadsThePlan(t *testing.T) {
+func TestRunPrioritiesReadsTheFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MINDSKEIN_HOME", home)
-	vault := t.TempDir()
+	notes := t.TempDir()
 
-	plan := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
+	body := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
 		"- [ ] !3 Dig Deeper feature — later\n"
-	if err := os.WriteFile(filepath.Join(vault, "plan.md"), []byte(plan), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(notes, "PRIORITIES.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("says where to configure a plan when none is set", func(t *testing.T) {
+	t.Run("says where to configure a priorities file when none is set", func(t *testing.T) {
 		var stdout bytes.Buffer
 		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
 			t.Fatalf("run(priorities) = %v, want nil", err)
@@ -544,12 +544,12 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 		}
 	})
 
-	config := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"plan.md\"\n"
+	config := "[priorities]\nfile = " + strconv.Quote(filepath.Join(notes, "PRIORITIES.md")) + "\n"
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("prints the priorities the configured plan declares", func(t *testing.T) {
+	t.Run("prints the priorities the configured file declares", func(t *testing.T) {
 		var stdout bytes.Buffer
 		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
 			t.Fatalf("run(priorities) = %v, want nil", err)
@@ -572,8 +572,8 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 		}
 	})
 
-	t.Run("says so when the configured plan is not there", func(t *testing.T) {
-		missing := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"absent.md\"\n"
+	t.Run("says so when the configured file is not there", func(t *testing.T) {
+		missing := "[priorities]\nfile = " + strconv.Quote(filepath.Join(notes, "absent.md")) + "\n"
 		if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(missing), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -581,7 +581,7 @@ func TestRunPrioritiesReadsThePlan(t *testing.T) {
 		if err := run([]string{"priorities"}, nil, &stdout, io.Discard); err != nil {
 			t.Fatalf("run(priorities) = %v, want nil, not a stack trace", err)
 		}
-		if !strings.Contains(stdout.String(), "no plan at") {
+		if !strings.Contains(stdout.String(), "no priorities file at") {
 			t.Errorf("stdout = %q, want the missing path named", stdout.String())
 		}
 	})

@@ -78,7 +78,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
 			return cmdStatus(args, stdout, stderr)
 		}},
-		{"priorities", "print the !1/!2 lines parsed out of plan.md", func(args []string, _ io.Reader) error {
+		{"priorities", "print the !1/!2 lines in your priorities file", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
@@ -136,8 +136,8 @@ func usage(w io.Writer, commands []command) {
 // is running, and where each thread was left.
 //
 // The three sections come from three independent sources, so each is composed
-// as a section rather than rendered inline: an unreadable plan or an
-// unreachable store costs one line of explanation, not the other two blocks.
+// as a section rather than rendered inline: an unreadable priorities file or
+// an unreachable store costs one line of explanation, not the other two blocks.
 func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	cfg, cfgErr := loadConfig()
 	hideAfter := cfg.Status.HideAfter
@@ -177,11 +177,11 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	)
 }
 
-// cmdPriorities prints the PRIORITIES block: what the vault's plan.md calls the
+// cmdPriorities prints the PRIORITIES block: what the configured note calls the
 // current focus, and what is queued behind it.
 //
-// Every way of having nothing to show — no config, no plan file, no priority
-// lines in it — prints the section with one line saying which, because a
+// Every way of having nothing to show — no config, no priorities file, no
+// priority lines in it — prints the section with one line saying which, because a
 // morning brief that stack-traces is worse than one that is briefly empty.
 func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 	cfg, cfgErr := loadConfig()
@@ -205,14 +205,14 @@ func cmdPriorities(args []string, stdout, stderr io.Writer) error {
 // renderPriorities is the PRIORITIES block, shared by the brief and by the
 // command that prints it alone.
 func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
-	path := cfg.Vault.PlanPath()
+	path := cfg.Priorities.Path()
 	if path == "" {
 		return priorities.Hint(w,
-			"no plan configured — set vault.path and vault.plan in "+configFile())
+			"no priorities file configured — set priorities.file in "+configFile())
 	}
-	plan, err := priorities.ParseFile(path)
+	list, err := priorities.ParseFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return priorities.Hint(w, "no plan at "+path)
+		return priorities.Hint(w, "no priorities file at "+path)
 	}
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func renderPriorities(w io.Writer, cfg config.Config, all bool) error {
 	if all {
 		levels = priorities.All
 	}
-	return priorities.Render(w, plan, priorities.RenderOptions{Levels: levels})
+	return priorities.Render(w, list, priorities.RenderOptions{Levels: levels})
 }
 
 // cmdStatus prints the live sessions block on its own: the mid-day check, and

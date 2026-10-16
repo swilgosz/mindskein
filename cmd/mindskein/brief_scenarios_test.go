@@ -15,20 +15,20 @@ import (
 	"github.com/swilgosz/mindskein/internal/session"
 )
 
-// briefHome sets up an install with a plan, a recorded session and a handoff,
+// briefHome sets up an install with a priorities file, a recorded session and a handoff,
 // so a brief has something to say in all three sections.
 func briefHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("MINDSKEIN_HOME", home)
 
-	vault := t.TempDir()
-	plan := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
+	notes := t.TempDir()
+	body := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
 		"- [ ] !3 Dig Deeper feature — later\n"
-	if err := os.WriteFile(filepath.Join(vault, "plan.md"), []byte(plan), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(notes, "PRIORITIES.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := "[vault]\npath = " + strconv.Quote(vault) + "\nplan = \"plan.md\"\n"
+	config := "[priorities]\nfile = " + strconv.Quote(filepath.Join(notes, "PRIORITIES.md")) + "\n"
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -111,15 +111,15 @@ func TestBriefCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("an unconfigured plan still leaves the other two sections printed", func(t *testing.T) {
+	t.Run("an unconfigured priorities file still leaves the other two sections printed", func(t *testing.T) {
 		t.Setenv("MINDSKEIN_HOME", t.TempDir())
 		out := runBrief(t)
 		if !strings.Contains(out, "config.toml") {
-			t.Errorf("brief does not say where to configure a plan:\n%s", out)
+			t.Errorf("brief does not say where to configure a priorities file:\n%s", out)
 		}
 		for _, want := range []string{session.Heading, handoff.Heading} {
 			if !strings.Contains(out, want) {
-				t.Errorf("brief missing %q after an unconfigured plan:\n%s", want, out)
+				t.Errorf("brief missing %q after an unconfigured priorities file:\n%s", want, out)
 			}
 		}
 	})

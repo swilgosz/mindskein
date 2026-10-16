@@ -36,7 +36,7 @@ archives:
     files:
       - README.md
       - LICENSE
-      - docs/plan-format.md
+      - docs/priorities-format.md
 
 checksum:
   name_template: checksums.txt

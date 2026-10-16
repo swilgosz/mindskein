@@ -70,18 +70,17 @@ registration written by an older version instead of adding a second one.
 `mindskein init --dry-run` shows what it would change without changing it, and
 `mindskein init --uninstall` removes the hooks again.
 
-Then restart Claude Code, and point it at your plan.
+Then restart Claude Code, and point it at your priorities file.
 
-### 1. Point it at your plan
+### 1. Point it at your priorities file
 
 `mindskein` does not guess where your notes live, because a wrong guess prints
 an empty list, which looks exactly like a quiet day. Write
 `~/.mindskein/config.toml`:
 
 ```toml
-[vault]
-path = "~/notes"          # optional base; ~ expands
-plan = "plan.md"          # relative to path, or absolute
+[priorities]
+file = "~/notes/PRIORITIES.md"  # absolute, or a leading ~
 
 [status]
 hide_after = "7d"         # drop sessions quiet longer than this; "0" keeps all
@@ -96,7 +95,7 @@ A priority is a checkbox **and** a level token:
 ```
 
 The full contract — what splits a label from its note, how wikilinks resolve,
-what is deliberately not supported — is in [`docs/plan-format.md`](docs/plan-format.md).
+what is deliberately not supported — is in [`docs/priorities-format.md`](docs/priorities-format.md).
 
 ### 2. Check it is recording
 
@@ -146,7 +145,7 @@ which is far longer than anything this should ever need.
 ```sh
 mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
-mindskein priorities    # the plan only
+mindskein priorities    # the priorities file only
 mindskein prune         # delete state past the retention horizon
 mindskein init          # register the hooks; --uninstall removes them
 ```

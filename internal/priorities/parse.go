@@ -1,6 +1,6 @@
-// Package priorities parses the !1 and !2 checkbox lines out of the vault's
-// plan.md, resolving Obsidian wikilinks to readable labels and truncating the
-// long trailing status prose.
+// Package priorities parses the !1 and !2 checkbox lines out of a priorities
+// file, resolving Obsidian wikilinks to readable labels and truncating the long
+// trailing status prose.
 package priorities
 
 import (
@@ -16,7 +16,7 @@ import (
 // the backlog.
 type Level int
 
-// The three levels the plan uses. Their order is their urgency, which is also
+// The three levels a priorities file uses. Their order is their urgency, which is also
 // the order they are printed in.
 const (
 	Now Level = iota + 1
@@ -24,7 +24,7 @@ const (
 	Backlog
 )
 
-// String spells a level the way the plan writes it.
+// String spells a level the way the file writes it.
 func (l Level) String() string { return fmt.Sprintf("!%d", int(l)) }
 
 // Item is one priority line.
@@ -41,10 +41,10 @@ type Item struct {
 	Done bool
 }
 
-// Plan is what one file yielded: the priority items, and enough about what was
+// List is what one file yielded: the priority items, and enough about what was
 // *not* counted to explain an empty result. A reader who is told only "nothing
 // found" cannot tell a quiet week from a file written to another convention.
-type Plan struct {
+type List struct {
 	Items []Item
 	// Checkboxes is every task line seen, tagged or not.
 	Checkboxes int
@@ -53,8 +53,8 @@ type Plan struct {
 }
 
 // itemPattern matches a priority line: a checkbox, then the level token. Both
-// halves are required, because plan.md is prose — it carries checkboxes with no
-// priority and priorities with no checkbox (a legend table explaining the
+// halves are required, because the file is prose — it carries checkboxes with
+// no priority and priorities with no checkbox (a legend table explaining the
 // convention), and neither is work.
 var itemPattern = regexp.MustCompile(`^[-*+]\s+\[([ xX])\]\s+!([123])\s+(.*)$`)
 
@@ -66,9 +66,9 @@ var checkboxPattern = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+\[[ xX]\]`)
 // linkPattern matches an Obsidian wikilink, embed marker included.
 var linkPattern = regexp.MustCompile(`!?\[\[([^\[\]]+)\]\]`)
 
-// Parse reads priority lines in the order the plan declares them.
-func Parse(r io.Reader) (Plan, error) {
-	var plan Plan
+// Parse reads priority lines in the order the file declares them.
+func Parse(r io.Reader) (List, error) {
+	var list List
 	scanner := bufio.NewScanner(r)
 	// A single !1 line runs to a paragraph of dated commentary; the default
 	// 64 KB token is ample, but a markdown table in the same file need not be.
@@ -87,7 +87,7 @@ func Parse(r io.Reader) (Plan, error) {
 			continue
 		}
 		if checkboxPattern.MatchString(line) {
-			plan.Checkboxes++
+			list.Checkboxes++
 		}
 		match := itemPattern.FindStringSubmatch(line)
 		if match == nil {
@@ -97,27 +97,27 @@ func Parse(r io.Reader) (Plan, error) {
 		if label == "" {
 			continue
 		}
-		plan.Items = append(plan.Items, Item{
+		list.Items = append(list.Items, Item{
 			Level: Level(match[2][0] - '0'),
 			Label: label,
 			Note:  note,
 			Done:  match[1] != " ",
 		})
 	}
-	return plan, scanner.Err()
+	return list, scanner.Err()
 }
 
-// ParseFile reads the plan note at path.
-func ParseFile(path string) (Plan, error) {
+// ParseFile reads the priorities file at path.
+func ParseFile(path string) (List, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return Plan{}, err
+		return List{}, err
 	}
 	defer f.Close()
 
-	plan, err := Parse(f)
-	plan.Source = path
-	return plan, err
+	list, err := Parse(f)
+	list.Source = path
+	return list, err
 }
 
 // split separates the label from the status prose, and resolves whichever

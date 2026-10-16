@@ -43,38 +43,31 @@ const (
 
 // Config is the contents of ~/.mindskein/config.toml.
 type Config struct {
-	Status    Status    `toml:"status"`
-	Vault     Vault     `toml:"vault"`
-	Retention Retention `toml:"retention"`
+	Status     Status     `toml:"status"`
+	Priorities Priorities `toml:"priorities"`
+	Retention  Retention  `toml:"retention"`
 }
 
-// Vault locates the notes the brief reads. Both keys are hand-written and
-// neither has a default: guessing a vault layout would be guessing at somebody
-// else's filesystem, and a wrong guess reads as "no priorities today".
-type Vault struct {
-	// Path is the vault root, and may be written with a leading ~.
-	Path string `toml:"path"`
-
-	// Plan is the note holding the !1/!2 lines, either absolute or relative
-	// to Path.
-	Plan string `toml:"plan"`
+// Priorities names the one file the brief reads its !1/!2 lines from. The file
+// is the user's: any note, any editor, any folder scheme — so this says nothing
+// about how those notes are organised.
+//
+// It is hand-written and has no default: guessing a location is guessing at
+// somebody else's filesystem, and a wrong guess reads as "no priorities today".
+type Priorities struct {
+	// File is the note holding the !1/!2 lines. Absolute, or written with a
+	// leading ~.
+	File string `toml:"file"`
 }
 
-// PlanPath is the absolute path of the plan note, or "" when the file has not
-// configured one.
-func (v Vault) PlanPath() string {
-	plan := expandHome(v.Plan)
-	switch {
-	case plan == "":
-		return ""
-	case filepath.IsAbs(plan):
-		return filepath.Clean(plan)
-	}
-	root := expandHome(v.Path)
-	if root == "" {
+// Path is the absolute path of the priorities note, or "" when the file has
+// not configured one.
+func (p Priorities) Path() string {
+	file := expandHome(p.File)
+	if file == "" {
 		return ""
 	}
-	return filepath.Join(root, plan)
+	return filepath.Clean(file)
 }
 
 // expandHome resolves a leading ~, which is how a home-relative path is
@@ -156,9 +149,17 @@ func Load(path string) (Config, error) {
 	if meta.IsDefined("retention", "handoffs") {
 		cfg.Retention.Handoffs = file.Retention.Handoffs
 	}
-	cfg.Vault = file.Vault
-	if cfg.Vault.Plan != "" && cfg.Vault.PlanPath() == "" {
-		return cfg, fmt.Errorf("%s: vault.plan is relative but vault.path is not set", path)
+	cfg.Priorities = file.Priorities
+	if p := cfg.Priorities.Path(); p != "" && !filepath.IsAbs(p) {
+		return cfg, fmt.Errorf("%s: priorities.file must be absolute or start with ~, got %q",
+			path, cfg.Priorities.File)
+	}
+	// The Undecoded check below would report a stale [vault] section as an
+	// unknown setting, which is true and unhelpful. Naming the replacement is
+	// the difference between a config that is broken and one that is fixable.
+	if meta.IsDefined("vault") {
+		return cfg, fmt.Errorf("%s: [vault] was replaced by [priorities]; write a single "+
+			"absolute priorities.file instead of vault.path plus vault.plan", path)
 	}
 	// A misspelled key is the failure this whole file is meant to avoid: a
 	// setting that appears to do nothing. Everything understood is applied
