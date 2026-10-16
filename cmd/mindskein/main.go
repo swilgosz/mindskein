@@ -675,6 +675,7 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 	all := fs.Bool("all", false, "print every finding and all of its evidence")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	backfill := fs.Bool("backfill", false, "summarise transcripts already on disk before reporting")
+	root := fs.String("root", "", "report one Claude config directory only, e.g. ~/.claude-personal")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -692,7 +693,7 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
 		}
 	}
-	report, err := buildUsage(store, time.Now(), *days)
+	report, err := buildUsage(store, time.Now(), *days, expandRoot(*root))
 	if err != nil {
 		return err
 	}
@@ -704,7 +705,22 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 	return insight.Render(stdout, report, *all)
 }
 
-func buildUsage(store *insight.Store, now time.Time, days int) (*insight.Report, error) {
+func expandRoot(p string) string {
+	if p == "" {
+		return ""
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return filepath.Clean(p)
+}
+
+func buildUsage(store *insight.Store, now time.Time, days int, root string) (*insight.Report, error) {
 	records, err := store.List()
 	if err != nil {
 		return nil, err
@@ -720,6 +736,9 @@ func buildUsage(store *insight.Store, now time.Time, days int) (*insight.Report,
 	var inv []insight.Inventory
 	for _, root := range store.Roots() {
 		inv = append(inv, insight.Scan(root, cwds[root]))
+	}
+	if root != "" {
+		records, inv = insight.ForRoot(records, inv, root)
 	}
 	return insight.Build(records, inv, now, days, store.Loc), nil
 }

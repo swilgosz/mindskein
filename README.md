@@ -174,6 +174,10 @@ mindskein usage --backfill            # ~/.claude and $CLAUDE_CONFIG_DIR
 mindskein usage --backfill ~/.claude-personal
 ```
 
+Every Claude config directory lands in one store and keeps its origin: the
+report covers all of them with a per-account line, and `--root
+~/.claude-personal` reads one alone.
+
 `--days N` changes the range (`0` is all time), `--all` prints every finding,
 and `--json` prints the report as the machine-readable contract other surfaces
 read. Costs use API list prices: on a subscription they are the value consumed,
