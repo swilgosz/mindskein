@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/swilgosz/mindskein/internal/text"
 )
@@ -33,54 +34,92 @@ type RenderOptions struct {
 	Group func(*Handoff) string
 }
 
-// Render writes the WHERE WE LEFT OFF block: one line per workstream, newest
-// first, saying when it stopped and what was being asked at the time.
+// Row is one workstream as the block shows it, before any column width
+// applies.
+type Row struct {
+	SessionID string    `json:"session_id"`
+	Label     string    `json:"label"`
+	EndedAt   time.Time `json:"ended_at"`
+	When      string    `json:"when"`
+	Message   string    `json:"message"`
+}
+
+// View is the WHERE WE LEFT OFF block decided but not yet printed.
+type View struct {
+	Rows []Row `json:"rows"`
+
+	// Hidden counts the workstreams beyond the limit.
+	Hidden int `json:"hidden"`
+
+	// Hint stands in for the rows when there are none.
+	Hint string `json:"hint,omitempty"`
+}
+
+// BuildView collapses the store into one row per workstream, newest first.
 //
 // It takes the whole store and collapses it here, because which handoffs
 // represent one piece of work is this block's question, not its caller's.
 // Input order is the store's: newest first, which is what makes the newest
 // handoff in a group the one that speaks for it.
-func Render(w io.Writer, handoffs []*Handoff, opts RenderOptions) error {
+func BuildView(handoffs []*Handoff, opts RenderOptions) View {
 	group := opts.Group
 	if group == nil {
 		group = ByProject
 	}
 	groups := NewestPer(handoffs, group)
-
 	if len(groups) == 0 {
-		return Hint(w, "nothing recorded yet — a handoff is written when a session finishes a turn")
+		return View{Hint: "nothing recorded yet — a handoff is written when a session finishes a turn"}
 	}
 
-	shown, hidden := groups, 0
+	var v View
+	shown := groups
 	if !opts.ShowAll && len(groups) > DefaultLimit {
-		shown, hidden = groups[:DefaultLimit], len(groups)-DefaultLimit
+		shown, v.Hidden = groups[:DefaultLimit], len(groups)-DefaultLimit
 	}
-
 	names := distinctNames(shown)
-
-	type row struct{ label, when, message string }
-	rows := make([]row, 0, len(shown))
-	labelW, whenW := 0, 0
 	for i, h := range shown {
-		label := text.Truncate(labelOf(names[i], h), maxLabelWidth)
-		when := endedAt(h)
-		labelW = max(labelW, len([]rune(label)))
-		whenW = max(whenW, len([]rune(when)))
-		rows = append(rows, row{label: label, when: when, message: message(h)})
+		v.Rows = append(v.Rows, Row{
+			SessionID: h.SessionID,
+			Label:     labelOf(names[i], h),
+			EndedAt:   h.EndedAt,
+			When:      endedAt(h),
+			Message:   message(h),
+		})
+	}
+	return v
+}
+
+// Render writes the WHERE WE LEFT OFF block: one line per workstream, newest
+// first, saying when it stopped and what was being asked at the time.
+func Render(w io.Writer, handoffs []*Handoff, opts RenderOptions) error {
+	return Print(w, BuildView(handoffs, opts))
+}
+
+// Print writes a view as the terminal shows it.
+func Print(w io.Writer, v View) error {
+	if v.Hint != "" {
+		return Hint(w, v.Hint)
+	}
+	labels := make([]string, len(v.Rows))
+	labelW, whenW := 0, 0
+	for i, r := range v.Rows {
+		labels[i] = text.Truncate(r.Label, maxLabelWidth)
+		labelW = max(labelW, len([]rune(labels[i])))
+		whenW = max(whenW, len([]rune(r.When)))
 	}
 
 	if _, err := fmt.Fprintln(w, Heading); err != nil {
 		return err
 	}
-	for _, r := range rows {
+	for i, r := range v.Rows {
 		line := strings.TrimRight(fmt.Sprintf("  %-*s  %-*s  %s",
-			labelW, r.label, whenW, r.when, r.message), " ")
+			labelW, labels[i], whenW, r.When, r.Message), " ")
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
-	if hidden > 0 {
-		if _, err := fmt.Fprintf(w, "\n  %d more (--all)\n", hidden); err != nil {
+	if v.Hidden > 0 {
+		if _, err := fmt.Fprintf(w, "\n  %d more (--all)\n", v.Hidden); err != nil {
 			return err
 		}
 	}
