@@ -46,6 +46,7 @@ type Record struct {
 	SessionID string               `json:"session_id"`
 	Root      string               `json:"root"`
 	Repo      string               `json:"repo"`
+	Project   string               `json:"project,omitempty"`
 	Main      Source               `json:"main"`
 	File      *File                `json:"file"`
 	Subagents map[string]*Subagent `json:"subagents,omitempty"`
@@ -175,8 +176,10 @@ func (r *Result) add(o Result) {
 
 // Capture brings the session's record up to date with its transcript and the
 // subagent transcripts beside it. Only bytes appended since the last capture
-// are read; a file that shrank is read again from the start.
-func (s *Store) Capture(transcript string) (Result, error) {
+// are read; a file that shrank is read again from the start. A non-empty
+// project names the workstream the session reports under instead of its
+// folder; an empty one keeps whatever an earlier capture recorded.
+func (s *Store) Capture(transcript, project string) (Result, error) {
 	var res Result
 	info, err := os.Stat(transcript)
 	if err != nil {
@@ -188,8 +191,12 @@ func (s *Store) Capture(transcript string) (Result, error) {
 		rec = &Record{Version: recordVersion, SessionID: id}
 	}
 	rec.Root = configRoot(transcript)
-
 	changed := false
+	if project != "" && project != rec.Project {
+		rec.Project = project
+		changed = true
+	}
+
 	if fresh(rec.Main, info) {
 		res.Skipped++
 	} else {
@@ -294,7 +301,7 @@ func (s *Store) Backfill(roots []string, since time.Time) (Result, error) {
 				res.Expired++
 				continue
 			}
-			r, err := s.Capture(p)
+			r, err := s.Capture(p, "")
 			res.add(r)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", p, err))

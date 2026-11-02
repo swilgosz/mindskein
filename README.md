@@ -156,7 +156,8 @@ mindskein init          # register the hooks; --uninstall removes them
 aged out, and every workstream rather than the newest few.
 
 Set `MINDSKEIN_PROJECT` before launching Claude to name a workstream that spans
-several folders and sessions. It is the only grouping key that does.
+several folders and sessions. It is the only grouping key that does, and
+`usage` reports a session's cost under it too.
 
 ### Usage
 
@@ -180,7 +181,20 @@ report covers all of them with a per-account line, and `--root
 
 `--days N` changes the range (`0` is all time), `--all` prints every finding,
 and `--json` prints the report as the machine-readable contract other surfaces
-read. Costs use API list prices: on a subscription they are the value consumed,
+read.
+
+To measure a change, compare fixed windows rather than "the last 30 days":
+
+```sh
+mindskein usage --since 2026-10-05 --until 2026-11-01   # before
+mindskein usage --since 2026-11-02 --until 2026-11-29   # after
+```
+
+Both days are included; `--until` alone ends the `--days` window on that day.
+The `per run` line shows what one run of each costly subagent type cost, the
+number a total hides when a cheap agent runs far more often than an expensive
+one. Unused-item findings always look back from today, since they describe the
+setup as installed now. Costs use API list prices: on a subscription they are the value consumed,
 not the bill.
 
 ### Dashboard
