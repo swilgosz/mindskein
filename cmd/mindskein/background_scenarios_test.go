@@ -182,8 +182,8 @@ func TestServeInTheBackground(t *testing.T) {
 		if err := stranger.Start(); err != nil {
 			t.Fatal(err)
 		}
-		exited := make(chan error, 1)
-		go func() { exited <- stranger.Wait() }()
+		exited := make(chan struct{})
+		go func() { stranger.Wait(); close(exited) }()
 		t.Cleanup(func() { stranger.Process.Kill(); <-exited })
 
 		started, err := proc.StartTime(stranger.Process.Pid)
@@ -199,8 +199,8 @@ func TestServeInTheBackground(t *testing.T) {
 			t.Fatalf("serve --stop: %v", err)
 		}
 		select {
-		case err := <-exited:
-			t.Fatalf("serve --stop signalled pid %d, which only reuses the recorded pid (%v)", stranger.Process.Pid, err)
+		case <-exited:
+			t.Fatalf("serve --stop signalled pid %d, which only reuses the recorded pid: %s", stranger.Process.Pid, stranger.ProcessState)
 		case <-time.After(500 * time.Millisecond):
 		}
 		if !strings.Contains(out.String(), "no background server") {
