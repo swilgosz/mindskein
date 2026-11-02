@@ -22,12 +22,18 @@ type Item struct {
 	Model      string `json:"model,omitempty"`
 	PluginOn   bool   `json:"plugin_enabled"`
 	ListingTok int    `json:"listing_tokens"`
+
+	// Uses90 is how often it ran in the last UnusedDays; set by Build.
+	Uses90 int `json:"uses_90d"`
 }
 
 type MCPServer struct {
 	Name   string   `json:"name"`
 	Root   string   `json:"root"`
 	Scopes []string `json:"scopes"`
+
+	// Uses90 is how often it was called in the last UnusedDays; set by Build.
+	Uses90 int `json:"uses_90d"`
 }
 
 type Hook struct {

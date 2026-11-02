@@ -27,6 +27,9 @@ const (
 // String spells a level the way the file writes it.
 func (l Level) String() string { return fmt.Sprintf("!%d", int(l)) }
 
+// MarshalText writes a level as it is written in the file, "!1".
+func (l Level) MarshalText() ([]byte, error) { return []byte(l.String()), nil }
+
 // Item is one priority line.
 type Item struct {
 	Level Level

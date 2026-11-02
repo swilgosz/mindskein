@@ -52,6 +52,16 @@ type Config struct {
 	Status     Status     `toml:"status"`
 	Priorities Priorities `toml:"priorities"`
 	Retention  Retention  `toml:"retention"`
+	Serve      Serve      `toml:"serve"`
+}
+
+// Serve configures the web view.
+type Serve struct {
+	// User and Password put HTTP Basic auth on every page once Password is
+	// set. Without one the server still starts, on loopback only, and says
+	// on start what it exposes.
+	User     string `toml:"user"`
+	Password string `toml:"password"`
 }
 
 // Priorities names the one file the brief reads its !1/!2 lines from. The file
@@ -164,6 +174,7 @@ func Load(path string) (Config, error) {
 		cfg.Retention.Usage = file.Retention.Usage
 	}
 	cfg.Priorities = file.Priorities
+	cfg.Serve = file.Serve
 	if p := cfg.Priorities.Path(); p != "" && !filepath.IsAbs(p) {
 		return cfg, fmt.Errorf("%s: priorities.file must be absolute or start with ~, got %q",
 			path, cfg.Priorities.File)

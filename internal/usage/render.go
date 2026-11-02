@@ -19,7 +19,12 @@ func Render(w io.Writer, r *Report, all bool) error {
 	}
 
 	span := "all time"
-	if r.Days > 0 {
+	switch {
+	case r.Until != "" && r.From != "":
+		span = fmt.Sprintf("%s to %s", r.From, r.Until)
+	case r.Until != "":
+		span = "up to " + r.Until
+	case r.Days > 0:
 		span = fmt.Sprintf("last %d days", r.Days)
 	}
 	p.line(fmt.Sprintf("USAGE  %s · %d sessions · %d prompts", span, r.Sessions, r.Prompts))
@@ -36,6 +41,9 @@ func Render(w io.Writer, r *Report, all bool) error {
 		p.line("  accounts   " + Tilde(spendList(r.Accounts, 4)))
 	}
 	p.line("  where      " + spendList(r.Workstreams, 4))
+	if runs := runList(r.Agents, 4); runs != "" {
+		p.line("  per run    " + runs)
+	}
 	p.line(fmt.Sprintf("  friction   %d interrupts · %d denials · %d compactions · %d hook errors",
 		r.Events[EventInterrupts], r.Events[EventDenials],
 		r.Events[EventCompactAuto]+r.Events[EventCompactManual], r.Events[EventHookErrors]))
@@ -90,6 +98,22 @@ func spendList(s []Spend, n int) string {
 	}
 	if len(parts) == 0 {
 		return "—"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// runList names the costliest subagent types with what one run of each cost,
+// the number a total hides when a cheap agent runs far more often.
+func runList(s []Spend, n int) string {
+	var parts []string
+	for _, x := range s {
+		if x.Runs == 0 {
+			continue
+		}
+		if len(parts) == n {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s %s × %d", x.Name, money(x.Cost/float64(x.Runs)), x.Runs))
 	}
 	return strings.Join(parts, " · ")
 }

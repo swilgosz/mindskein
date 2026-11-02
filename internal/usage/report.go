@@ -2,7 +2,9 @@ package usage
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +20,10 @@ type Spend struct {
 	Turns  int64   `json:"turns"`
 	Output int64   `json:"output"`
 	Share  float64 `json:"share"`
+
+	// Runs counts subagent transcripts with turns in the range; main-session
+	// rows have none.
+	Runs int `json:"runs,omitempty"`
 }
 
 type ToolRow struct {
@@ -29,6 +35,7 @@ type SessionRow struct {
 	ID         string    `json:"id"`
 	Title      string    `json:"title"`
 	Repo       string    `json:"repo"`
+	Project    string    `json:"project,omitempty"`
 	Start      time.Time `json:"start"`
 	Prompts    int       `json:"prompts"`
 	Turns      int64     `json:"turns"`
@@ -63,6 +70,45 @@ func (s *Severity) UnmarshalText(b []byte) error {
 	return fmt.Errorf("unknown severity %q", b)
 }
 
+// Day is one local day: cost by model and the events counted on it.
+type Day struct {
+	Day    string             `json:"day"`
+	Cost   map[string]float64 `json:"cost"`
+	Events map[string]int     `json:"events"`
+}
+
+// Use is how often one skill, command, agent or MCP server ran.
+type Use struct {
+	Root  string `json:"root"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// maxBigResults caps the largest-results list; past twenty they repeat a
+// pattern already visible.
+const maxBigResults = 20
+
+// Count is one named tally.
+type Count struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+func counts(m map[string]int) []Count {
+	out := make([]Count, 0, len(m))
+	for k, v := range m {
+		out = append(out, Count{k, v})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
 // Finding is one thing worth fixing, with the evidence behind it.
 type Finding struct {
 	Severity Severity `json:"severity"`
@@ -77,6 +123,10 @@ type Report struct {
 	GeneratedAt time.Time `json:"generated_at"`
 	Days        int       `json:"days"`
 	From        string    `json:"from"`
+
+	// Until is the last day of a fixed window, empty when the range ends
+	// today.
+	Until string `json:"until,omitempty"`
 
 	Sessions int     `json:"sessions"`
 	Prompts  int     `json:"prompts"`
@@ -95,6 +145,23 @@ type Report struct {
 	Findings    []Finding      `json:"findings"`
 
 	Inventory []Inventory `json:"inventory"`
+
+	// HookErrors counts each failing hook in the range, most failures first.
+	HookErrors []Count `json:"hook_errors"`
+
+	// Daily is every local day of the range, oldest first, days without
+	// work included so a chart's gaps are real.
+	Daily []Day `json:"daily"`
+
+	// PromptHours counts prompts by local weekday, Monday first, and hour.
+	PromptHours [7][24]int `json:"prompt_hours"`
+
+	// BigResults are the largest tool results in the range, biggest first.
+	BigResults []BigResult `json:"big_results"`
+
+	// Uses counts each skill, command, agent and MCP server run in the
+	// range, most first.
+	Uses []Use `json:"uses"`
 
 	// HistoryDays is how far back the store reaches. Unused-item findings are
 	// only as good as it is long.
@@ -132,19 +199,63 @@ func ForRoot(records []*Record, inv []Inventory, root string) ([]*Record, []Inve
 	return rs, is
 }
 
+// Window is the range of local days a report covers. Since and Until are
+// YYYY-MM-DD and both included. Without Since the range is the last Days days
+// up to Until, or up to today; Days 0 then means all time.
+type Window struct {
+	Days  int
+	Since string
+	Until string
+}
+
+// ParseWindow checks a requested range, naming the flag at fault, so a typo
+// is an error rather than a report of nothing.
+func ParseWindow(days int, since, until string) (Window, error) {
+	if days < 0 {
+		return Window{}, fmt.Errorf("--days %d: want 0 or more", days)
+	}
+	for _, d := range [...]struct{ flag, value string }{{"--since", since}, {"--until", until}} {
+		if _, err := time.Parse(time.DateOnly, d.value); d.value != "" && err != nil {
+			return Window{}, fmt.Errorf("%s %q: want a date as YYYY-MM-DD", d.flag, d.value)
+		}
+	}
+	if since != "" && until != "" && since > until {
+		return Window{}, fmt.Errorf("--since %s is after --until %s", since, until)
+	}
+	return Window{Days: days, Since: since, Until: until}, nil
+}
+
 // Build aggregates records over the last days (0 means all time) and judges
 // them against the inventory.
 func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *time.Location) *Report {
+	return BuildWindow(records, inv, now, Window{Days: days}, loc)
+}
+
+// BuildWindow is Build over any window. Unused-item findings still look back
+// from now: they judge the setup as it is installed today.
+func BuildWindow(records []*Record, inv []Inventory, now time.Time, w Window, loc *time.Location) *Report {
 	if loc == nil {
 		loc = time.Local
 	}
-	r := &Report{GeneratedAt: now, Days: days, Events: map[string]int{}, Inventory: inv}
-	from := ""
-	if days > 0 {
-		from = now.In(loc).AddDate(0, 0, -days+1).Format(time.DateOnly)
-		r.From = from
+	today := now.In(loc).Format(time.DateOnly)
+	last, _ := time.ParseInLocation(time.DateOnly, today, loc)
+	if w.Until != "" {
+		if t, err := time.ParseInLocation(time.DateOnly, w.Until, loc); err == nil {
+			last = t
+		}
 	}
-	inRange := func(day string) bool { return day != "" && day >= from }
+	r := &Report{GeneratedAt: now, Days: w.Days, Until: w.Until, Events: map[string]int{}, Inventory: inv}
+	from := w.Since
+	if from == "" && w.Days > 0 {
+		from = last.AddDate(0, 0, -w.Days+1).Format(time.DateOnly)
+	}
+	r.From = from
+	if first, err := time.ParseInLocation(time.DateOnly, w.Since, loc); err == nil {
+		r.Days = int(math.Round(last.Sub(first).Hours()/24)) + 1
+		r.Until = last.Format(time.DateOnly)
+	}
+	until := r.Until
+	inRange := func(day string) bool { return day != "" && day >= from && (until == "" || day <= until) }
 	cutoff90 := now.In(loc).AddDate(0, 0, -UnusedDays+1).Format(time.DateOnly)
 
 	models := map[string]*Spend{}
@@ -154,6 +265,9 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 	tools := map[string]*ToolStat{}
 	hookErrors := map[string]int{}
 	uses90 := map[string]int{} // root|kind:name
+	usesInRange := map[string]int{}
+	dailyCost := map[string]map[string]float64{}
+	dailyEvents := map[string]map[string]int{}
 	var big []BigResult
 	var listing []int
 	turns, bigTurns := int64(0), 0
@@ -182,10 +296,15 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 			}{sa.AgentType, sa.File})
 		}
 
-		row := SessionRow{ID: rec.SessionID, Title: f.DisplayTitle(), Repo: rec.Repo, Start: f.Start,
+		ws := rec.Repo
+		if rec.Project != "" {
+			ws = rec.Project
+		}
+		row := SessionRow{ID: rec.SessionID, Title: f.DisplayTitle(), Repo: rec.Repo, Project: rec.Project, Start: f.Start,
 			ContextMax: f.ContextMax, ContextBig: f.ContextBig}
 		active := false
 		for _, x := range files {
+			ran := map[string]bool{}
 			for day, byModel := range x.file.Usage {
 				if !inRange(day) {
 					continue
@@ -199,7 +318,11 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 					r.Tokens.add(t, 1)
 					r.Cost.add(c)
 					addSpend(models, ModelName(model), c.Total(), t)
-					addSpend(repos, orUnknown(rec.Repo), c.Total(), t)
+					if dailyCost[day] == nil {
+						dailyCost[day] = map[string]float64{}
+					}
+					dailyCost[day][ModelName(model)] += c.Total()
+					addSpend(repos, orUnknown(ws), c.Total(), t)
 					addSpend(accounts, orUnknown(rec.Root), c.Total(), t)
 					agent := x.agent
 					if agent == "" {
@@ -207,11 +330,15 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 					} else {
 						r.SubCost += c.Total()
 						row.SubCost += c.Total()
+						ran[agent+" on "+ModelName(model)] = true
 					}
 					addSpend(agents, agent+" on "+ModelName(model), c.Total(), t)
 					row.Cost += c.Total()
 					row.Turns += t.Turns
 				}
+			}
+			for name := range ran {
+				agents[name].Runs++
 			}
 			for day, byTool := range x.file.Tools {
 				if !inRange(day) {
@@ -234,6 +361,9 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 				}
 				for k, n := range uses {
 					uses90[rec.Root+"|"+k] += n
+					if inRange(day) {
+						usesInRange[rec.Root+"|"+k] += n
+					}
 				}
 			}
 			for _, b := range x.file.Big {
@@ -246,8 +376,12 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 			if !inRange(day) {
 				continue
 			}
+			if dailyEvents[day] == nil {
+				dailyEvents[day] = map[string]int{}
+			}
 			for k, n := range ev {
 				r.Events[k] += n
+				dailyEvents[day][k] += n
 				if k == EventPrompts {
 					row.Prompts += n
 				}
@@ -255,6 +389,20 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 		}
 		if !active && row.Prompts == 0 {
 			continue
+		}
+		for day, hours := range f.Hours {
+			if !inRange(day) {
+				continue
+			}
+			d, err := time.ParseInLocation(time.DateOnly, day, loc)
+			if err != nil {
+				continue
+			}
+			for h, n := range hours {
+				if hour, err := strconv.Atoi(h); err == nil && hour >= 0 && hour < 24 {
+					r.PromptHours[(int(d.Weekday())+6)%7][hour] += n
+				}
+			}
 		}
 		r.Sessions++
 		r.Prompts += row.Prompts
@@ -286,6 +434,13 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 		r.TopSessions = r.TopSessions[:20]
 	}
 
+	r.HookErrors = counts(hookErrors)
+	r.Daily = dailyRows(from, last, dailyCost, dailyEvents)
+	r.BigResults = append([]BigResult(nil), big...)
+	sort.SliceStable(r.BigResults, func(i, j int) bool { return r.BigResults[i].Bytes > r.BigResults[j].Bytes })
+	r.BigResults = r.BigResults[:min(len(r.BigResults), maxBigResults)]
+	r.Uses = usesOf(usesInRange)
+	r.Inventory = withUses(inv, uses90)
 	r.Findings = findings(r, inv, uses90, hookErrors, big, listing, turns, bigTurns)
 	r.HistoryDays = historyDays(records, now)
 	if r.HistoryDays < UnusedDays {
@@ -557,3 +712,76 @@ func sumSlice(s []int) int {
 }
 
 func pct(f float64) string { return fmt.Sprintf("%.0f%%", f*100) }
+
+// dailyRows lays out every day from the first through today. An all-time
+// range starts at the first day anything happened.
+func dailyRows(from string, end time.Time, cost map[string]map[string]float64, events map[string]map[string]int) []Day {
+	if from == "" {
+		for day := range cost {
+			if from == "" || day < from {
+				from = day
+			}
+		}
+		for day := range events {
+			if from == "" || day < from {
+				from = day
+			}
+		}
+	}
+	start, err := time.ParseInLocation(time.DateOnly, from, end.Location())
+	if err != nil {
+		return []Day{}
+	}
+	last := end.Format(time.DateOnly)
+	out := []Day{}
+	for d := start; ; d = d.AddDate(0, 0, 1) {
+		day := d.Format(time.DateOnly)
+		if day > last {
+			break
+		}
+		row := Day{Day: day, Cost: cost[day], Events: events[day]}
+		if row.Cost == nil {
+			row.Cost = map[string]float64{}
+		}
+		if row.Events == nil {
+			row.Events = map[string]int{}
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// usesOf turns root|kind:name counts into rows, most first.
+func usesOf(m map[string]int) []Use {
+	out := []Use{}
+	for key, n := range m {
+		root, kindName, _ := strings.Cut(key, "|")
+		kind, name, _ := strings.Cut(kindName, ":")
+		out = append(out, Use{Root: root, Kind: kind, Name: name, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Kind+out[i].Name < out[j].Kind+out[j].Name
+	})
+	return out
+}
+
+// withUses copies the inventory with each item's and server's 90-day uses
+// filled in, leaving the caller's slices alone.
+func withUses(inv []Inventory, uses90 map[string]int) []Inventory {
+	out := make([]Inventory, len(inv))
+	for i, in := range inv {
+		in.Items = append([]Item(nil), in.Items...)
+		for j := range in.Items {
+			in.Items[j].Uses90 = itemUses(in.Items[j], uses90)
+		}
+		in.MCP = append([]MCPServer(nil), in.MCP...)
+		for j := range in.MCP {
+			in.MCP[j].Uses90 = mcpUses(in.MCP[j], uses90)
+		}
+		out[i] = in
+	}
+	return out
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -200,6 +201,54 @@ func TestBriefCommand(t *testing.T) {
 		}
 		if !strings.Contains(wide, "logout") {
 			t.Errorf("--all did not show the ended session:\n%s", wide)
+		}
+	})
+}
+
+func TestBriefJSON(t *testing.T) {
+	t.Run("brief --json carries every row the text brief prints and the counts of what it hid, from the same view", func(t *testing.T) {
+		briefHome(t)
+		base := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+		for i := range 7 {
+			writeHandoff(t, &handoff.Handoff{SessionID: "hand000" + string(rune('1'+i)), Project: "stream-" + string(rune('a'+i)),
+				CWD: "/tmp/x", Status: "done", StartedAt: base.Add(time.Duration(i) * time.Hour), EndedAt: base.Add(time.Duration(i)*time.Hour + time.Minute),
+				Message: "step " + string(rune('a'+i))})
+		}
+		text := runBrief(t)
+		var b struct {
+			Priorities struct {
+				Rows   []struct{ Level, Label string }
+				Hidden int
+			}
+			Sessions struct {
+				Rows []struct {
+					ShortID string `json:"short_id"`
+				}
+			}
+			Handoffs struct {
+				Rows   []struct{ Label, Message string }
+				Hidden int
+			}
+		}
+		if err := json.Unmarshal([]byte(runBrief(t, "--json")), &b); err != nil {
+			t.Fatal(err)
+		}
+		if len(b.Priorities.Rows) != 1 || b.Priorities.Rows[0].Level != "!1" || !strings.Contains(text, b.Priorities.Rows[0].Label) {
+			t.Errorf("priorities = %+v, want the one !1 the text prints", b.Priorities.Rows)
+		}
+		if b.Priorities.Hidden != 1 || !strings.Contains(text, "1 more in the backlog") {
+			t.Errorf("priorities hidden = %d, want the 1 the text counts", b.Priorities.Hidden)
+		}
+		if len(b.Sessions.Rows) != 1 || !strings.Contains(text, b.Sessions.Rows[0].ShortID) {
+			t.Errorf("sessions = %+v, want the one the text prints", b.Sessions.Rows)
+		}
+		if len(b.Handoffs.Rows) != 5 || b.Handoffs.Hidden != 2 || !strings.Contains(text, "2 more (--all)") {
+			t.Fatalf("handoffs = %d rows, %d hidden; want 5 and the 2 the text counts", len(b.Handoffs.Rows), b.Handoffs.Hidden)
+		}
+		for _, r := range b.Handoffs.Rows {
+			if !strings.Contains(text, r.Label) || !strings.Contains(text, r.Message) {
+				t.Errorf("handoff %q / %q is in the JSON but not in the text", r.Label, r.Message)
+			}
 		}
 	})
 }
