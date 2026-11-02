@@ -91,6 +91,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
 			return cmdUsage(args, stdout, stderr)
 		}},
+		{"resolve", "mark a usage finding fixed, hidden until it happens again", func(args []string, _ io.Reader) error {
+			return cmdResolve(args, stdout, stderr)
+		}},
+		{"unresolve", "undo a resolve, so the finding is reported again", func(args []string, _ io.Reader) error {
+			return cmdUnresolve(args, stdout, stderr)
+		}},
 		{"serve", "open the dashboard on 127.0.0.1: usage, overview, setup, health", func(args []string, _ io.Reader) error {
 			return cmdServe(args, stdout, stderr)
 		}},
@@ -783,6 +789,7 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	backfill := fs.Bool("backfill", false, "summarise transcripts already on disk before reporting")
 	root := fs.String("root", "", "report one Claude config directory only, e.g. ~/.claude-personal")
+	includeResolved := fs.Bool("include-resolved", false, "report findings as if nothing were resolved")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -809,7 +816,13 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
 		}
 	}
-	report, err := buildUsage(store, time.Now(), window, expandRoot(*root))
+	var resolved []insight.Resolution
+	if !*includeResolved {
+		if resolved, err = loadResolved(); err != nil {
+			return err
+		}
+	}
+	report, err := buildUsage(store, time.Now(), window, expandRoot(*root), resolved)
 	if err != nil {
 		return err
 	}
@@ -836,7 +849,9 @@ func expandRoot(p string) string {
 	return filepath.Clean(p)
 }
 
-func buildUsage(store *insight.Store, now time.Time, window insight.Window, root string) (*insight.Report, error) {
+// buildUsage builds the report every usage surface prints, its findings
+// judged against resolved.
+func buildUsage(store *insight.Store, now time.Time, window insight.Window, root string, resolved []insight.Resolution) (*insight.Report, error) {
 	records, err := store.List()
 	if err != nil {
 		return nil, err
@@ -856,5 +871,5 @@ func buildUsage(store *insight.Store, now time.Time, window insight.Window, root
 	if root != "" {
 		records, inv = insight.ForRoot(records, inv, root)
 	}
-	return insight.BuildWindow(records, inv, now, window, store.Loc), nil
+	return insight.BuildResolved(records, inv, now, window, store.Loc, resolved), nil
 }

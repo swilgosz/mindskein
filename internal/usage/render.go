@@ -51,12 +51,12 @@ func Render(w io.Writer, r *Report, all bool) error {
 		r.Events[EventCompactAuto]+r.Events[EventCompactManual], r.Events[EventHookErrors]))
 
 	p.line("")
+	p.line("FIX FIRST")
 	if len(r.Findings) == 0 {
-		p.line("FIX FIRST")
 		p.line("  nothing to flag in this range")
+		p.resolvedFooter(r)
 		return p.err
 	}
-	p.line("FIX FIRST")
 	limit, evidence := 5, 3
 	if all {
 		limit, evidence = len(r.Findings), 1<<30
@@ -93,9 +93,19 @@ func Render(w io.Writer, r *Report, all bool) error {
 			p.line("      - " + Tilde(oneLine(e)))
 		}
 	}
+	p.resolvedFooter(r)
 	p.line("")
 	p.line("  Costs use API list prices: on a subscription they are the value consumed, not the bill.")
 	return p.err
+}
+
+// resolvedFooter says how many findings and items the report leaves out as
+// resolved, and where to see them.
+func (p *printer) resolvedFooter(r *Report) {
+	if n := r.HiddenCount(); n > 0 {
+		p.line("")
+		p.line(fmt.Sprintf("  %d resolved · mindskein resolve --list", n))
+	}
 }
 
 func spendList(s []Spend, n int) string {

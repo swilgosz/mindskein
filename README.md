@@ -147,6 +147,7 @@ mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
 mindskein usage         # token spend and what to improve in your setup
+mindskein resolve       # mark a finding fixed; unresolve undoes it
 mindskein serve         # the dashboard in a browser, on 127.0.0.1
 mindskein prune         # delete state past its retention horizon
 mindskein init          # register the hooks; --uninstall removes them
@@ -190,6 +191,31 @@ skills, agents, MCP servers, subagent rows, instruction files) carry items:
 `--all` lists every one with its address, `<id>:<key>`, and `--json` gives
 `id` and `items` (`key`, `text`) beside the capped `evidence`.
 
+Once you have fixed a finding, resolve it so it stops topping the list:
+
+```sh
+mindskein resolve hook-failures --note "removed the plugin"
+mindskein resolve 'hook-failures:PostToolUse:Bash :: node "…/fix.mjs"'   # one item
+mindskein resolve --list        # what is resolved, when and why
+mindskein unresolve hook-failures
+```
+
+`resolve` takes an id, or an item as `<id>:<key>` exactly as `--all` prints it,
+from the report `usage` would print with the same `--days`, `--since`,
+`--until` and `--root` (30 days by default); anything else is an error listing
+the valid ids. `big-results`, `context-bloat`, `cache-writes` and
+`skill-listing` list no items and resolve only as a whole. Resolving it again
+replaces the time and note. Resolutions hold for every config root.
+
+A resolved hook failure, big result or top-tier subagent run stays hidden until
+it happens again after the resolve time, and the finding then counts only the
+new occurrences. The other findings stay hidden while resolved. A finding with
+some items resolved shows the rest, its title, severity and saving counted from
+them. The report ends with how many findings and items are hidden (`3 resolved
+· mindskein resolve --list`), `--json` lists each resolution under `resolved`
+with how much it hides, and `--include-resolved` reports as if nothing were
+resolved, for before/after comparisons.
+
 To measure a change, compare fixed windows rather than "the last 30 days":
 
 ```sh
@@ -210,6 +236,8 @@ not the bill.
 `http://127.0.0.1:8787`: usage, the brief, setup (are the hooks registered,
 what failed) and the health of each Claude config. It listens on the loopback
 interface only, and the page loads nothing from the internet.
+It only reads: recommendations show each finding's id and how many are
+resolved, and resolving stays on the command line.
 
 Anyone who reaches the port sees session titles, prompts and tool inputs. Set
 a password before you tunnel it to another device:
@@ -261,6 +289,7 @@ The hooks point at the same path, so there is no need to run `init` again.
   sessions/         one JSON file per session — id, folder, status, last tool
   handoffs/         one markdown file per session — title, times, last prompt
   usage/            one JSON file per session — token counts, tool and skill use
+  resolved.json     findings you marked fixed with `resolve`; prune keeps it
   hooks.log         appended to only when a hook fails
   serve.json        the background server, while one runs: pid, port, flags
   serve.log         the background server's output
