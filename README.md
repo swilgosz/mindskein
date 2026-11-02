@@ -150,6 +150,7 @@ mindskein usage         # token spend and what to improve in your setup
 mindskein serve         # the dashboard in a browser, on 127.0.0.1
 mindskein prune         # delete state past its retention horizon
 mindskein init          # register the hooks; --uninstall removes them
+mindskein upgrade       # build the newest version with Go and swap it in
 ```
 
 `--all` widens every section: the `!3` backlog, sessions that have ended or
@@ -228,6 +229,24 @@ Starting a second one says where the first is running instead. `--stop` signals
 only the process it started: a recorded pid now held by something else is left
 alone.
 
+### Upgrade
+
+```sh
+mindskein upgrade                  # the newest commit on main
+mindskein upgrade --ref v0.2.0     # any branch, tag or commit
+mindskein upgrade --no-restart     # leave the background server stopped
+```
+
+`upgrade` needs Go on `PATH`. It stops a background server, builds the module
+with `go install` and `GOPROXY=direct`, so a commit pushed a minute ago is the
+one you get, and renames the new binary over the one you ran. A hook firing
+meanwhile runs the old binary or the new one, never half of either. It prints
+`old -> new`, or `already up to date` and leaves the binary alone, then starts
+the server again with the flags it had.
+
+A failed build changes nothing: the old binary stays and the server comes back.
+The hooks point at the same path, so there is no need to run `init` again.
+
 ## What it stores, and where
 
 ```
@@ -243,7 +262,7 @@ alone.
 
 **Nothing leaves your machine.** No uploads, no telemetry, no account, no third-party service. The store above is all of it, and it is yours to delete.
 
-Today the binary makes no network calls at all, because everything it reads is a local file. That is a fact about this version, not the boundary. **Pulling your work in from the tools it already lives in — a tracker, a code host, a to-do app — is the point of this thing**, and when those adapters land they are outbound reads only, to hosts you name, with credentials that stay on disk here. Fetching your own data in is not the same as sending it out, and sending it out is what this promises never to do.
+Today the binary makes no network calls of its own, because everything it reads is a local file. The one exception is `mindskein upgrade`, which runs `go install`: Go fetches the module from GitHub and checks it against the Go checksum database, `sum.golang.org`. That is a fact about this version, not the boundary. **Pulling your work in from the tools it already lives in — a tracker, a code host, a to-do app — is the point of this thing**, and when those adapters land they are outbound reads only, to hosts you name, with credentials that stay on disk here. Fetching your own data in is not the same as sending it out, and sending it out is what this promises never to do.
 
 Be aware of what a handoff holds: **the last message you typed**, verbatim, up to 1500 characters. That is the point — it is what answers "where did we leave off" — but it means anything you paste into a session can land in `~/.mindskein/handoffs/`. The directory is created `0700` and the files `0600`.
 
