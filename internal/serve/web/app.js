@@ -461,7 +461,12 @@ function usageRecommendations(d, el) {
   const findings = d.findings || [];
   const hist = d.history_days || 0;
   const note = `“Unused” looks at the last ${UNUSED_DAYS} days${hist && hist < UNUSED_DAYS ? `, and only ${esc(fmt.int(hist))} days of history are recorded so far` : ""}.`;
-  const body = card(el, "Recommendations", { right: findings.length ? `${findings.length} finding${findings.length === 1 ? "" : "s"}` : "", note });
+  const hidden = (d.resolved || []).filter((r) => r.hidden > 0).length;
+  const right = [
+    findings.length ? `${findings.length} finding${findings.length === 1 ? "" : "s"}` : "",
+    hidden ? `<span title="Hidden until they happen again. See them with: mindskein resolve --list">${hidden} resolved</span>` : "",
+  ].filter(Boolean).join(" · ");
+  const body = card(el, "Recommendations", { right, note });
   body.innerHTML = findings.length
     ? findings
         .map(
