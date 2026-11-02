@@ -368,6 +368,7 @@ func BuildWindow(records []*Record, inv []Inventory, now time.Time, w Window, lo
 			}
 			for _, b := range x.file.Big {
 				if inRange(b.Day) {
+					b.At = x.file.ResultAt(b)
 					big = append(big, b)
 				}
 			}
