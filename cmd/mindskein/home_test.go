@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+// cliChild makes the test binary act as mindskein itself, for commands that
+// re-execute their own binary: serve --background starts the server that way.
+const cliChild = "MINDSKEIN_TEST_CLI"
+
 // TestMain runs every test against a throwaway home. Code under test resolves
 // ~ to find settings.json and the stores, and a test that forgets to isolate
 // itself — or a mutation that turns a dry run into a write — must reach a
@@ -22,6 +26,10 @@ func TestMain(m *testing.M) {
 		os.Unsetenv("MINDSKEIN_HOME")
 	}
 	os.Unsetenv("CLAUDE_CONFIG_DIR")
+	if os.Getenv(cliChild) == "1" {
+		main()
+		os.Exit(0)
+	}
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
