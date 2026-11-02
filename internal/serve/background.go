@@ -149,7 +149,7 @@ func recordStarted(home string, pid int, ready *os.File, args []string) (*Backgr
 	}
 	b := &Background{
 		PID:          pid,
-		PIDStartedAt: started,
+		PIDStartedAt: started.UTC(),
 		Port:         port,
 		Args:         append([]string{}, args...),
 		StartedAt:    time.Now().UTC(),
