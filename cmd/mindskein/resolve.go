@@ -62,14 +62,25 @@ func cmdResolve(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	now := time.Now()
-	report, err := buildUsage(store, now, window, expandRoot(*root), nil)
+	records, inv, err := loadUsage(store, expandRoot(*root))
 	if err != nil {
 		return err
 	}
+	report := insight.BuildResolved(records, inv, now, window, store.Loc, nil)
 	if err := insight.Validate(report, id, key); err != nil {
 		return err
 	}
-	res := insight.Resolution{ID: id, Key: key, ResolvedAt: now.UTC(), Note: *note}
+	existing, err := file.Load()
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		judged := insight.BuildResolved(records, inv, now, window, store.Loc, existing)
+		if err := file.Settle(judged.Resolved); err != nil {
+			return err
+		}
+	}
+	res := insight.NewResolution(report, id, key, now.UTC(), *note)
 	if err := file.Resolve(res); err != nil {
 		return err
 	}

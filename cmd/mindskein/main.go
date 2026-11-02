@@ -816,15 +816,22 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
 		}
 	}
+	file, err := insight.DefaultResolved()
+	if err != nil {
+		return err
+	}
 	var resolved []insight.Resolution
 	if !*includeResolved {
-		if resolved, err = loadResolved(); err != nil {
+		if resolved, err = file.Load(); err != nil {
 			return err
 		}
 	}
 	report, err := buildUsage(store, time.Now(), window, expandRoot(*root), resolved)
 	if err != nil {
 		return err
+	}
+	if err := file.Settle(report.Resolved); err != nil {
+		fmt.Fprintf(stderr, "mindskein: dropping cleared resolutions: %v\n", err)
 	}
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
@@ -852,9 +859,19 @@ func expandRoot(p string) string {
 // buildUsage builds the report every usage surface prints, its findings
 // judged against resolved.
 func buildUsage(store *insight.Store, now time.Time, window insight.Window, root string, resolved []insight.Resolution) (*insight.Report, error) {
-	records, err := store.List()
+	records, inv, err := loadUsage(store, root)
 	if err != nil {
 		return nil, err
+	}
+	return insight.BuildResolved(records, inv, now, window, store.Loc, resolved), nil
+}
+
+// loadUsage reads the records and scans the inventory a report is built
+// from, of one config root when root is set.
+func loadUsage(store *insight.Store, root string) ([]*insight.Record, []insight.Inventory, error) {
+	records, err := store.List()
+	if err != nil {
+		return nil, nil, err
 	}
 	cwds := map[string][]string{}
 	seen := map[string]bool{}
@@ -871,5 +888,5 @@ func buildUsage(store *insight.Store, now time.Time, window insight.Window, root
 	if root != "" {
 		records, inv = insight.ForRoot(records, inv, root)
 	}
-	return insight.BuildResolved(records, inv, now, window, store.Loc, resolved), nil
+	return records, inv, nil
 }
