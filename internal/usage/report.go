@@ -2,6 +2,7 @@ package usage
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,10 @@ type Spend struct {
 	Turns  int64   `json:"turns"`
 	Output int64   `json:"output"`
 	Share  float64 `json:"share"`
+
+	// Runs counts subagent transcripts with turns in the range; main-session
+	// rows have none.
+	Runs int `json:"runs,omitempty"`
 }
 
 type ToolRow struct {
@@ -30,6 +35,7 @@ type SessionRow struct {
 	ID         string    `json:"id"`
 	Title      string    `json:"title"`
 	Repo       string    `json:"repo"`
+	Project    string    `json:"project,omitempty"`
 	Start      time.Time `json:"start"`
 	Prompts    int       `json:"prompts"`
 	Turns      int64     `json:"turns"`
@@ -118,6 +124,10 @@ type Report struct {
 	Days        int       `json:"days"`
 	From        string    `json:"from"`
 
+	// Until is the last day of a fixed window, empty when the range ends
+	// today.
+	Until string `json:"until,omitempty"`
+
 	Sessions int     `json:"sessions"`
 	Prompts  int     `json:"prompts"`
 	Tokens   Tokens  `json:"tokens"`
@@ -189,19 +199,63 @@ func ForRoot(records []*Record, inv []Inventory, root string) ([]*Record, []Inve
 	return rs, is
 }
 
+// Window is the range of local days a report covers. Since and Until are
+// YYYY-MM-DD and both included. Without Since the range is the last Days days
+// up to Until, or up to today; Days 0 then means all time.
+type Window struct {
+	Days  int
+	Since string
+	Until string
+}
+
+// ParseWindow checks a requested range, naming the flag at fault, so a typo
+// is an error rather than a report of nothing.
+func ParseWindow(days int, since, until string) (Window, error) {
+	if days < 0 {
+		return Window{}, fmt.Errorf("--days %d: want 0 or more", days)
+	}
+	for _, d := range [...]struct{ flag, value string }{{"--since", since}, {"--until", until}} {
+		if _, err := time.Parse(time.DateOnly, d.value); d.value != "" && err != nil {
+			return Window{}, fmt.Errorf("%s %q: want a date as YYYY-MM-DD", d.flag, d.value)
+		}
+	}
+	if since != "" && until != "" && since > until {
+		return Window{}, fmt.Errorf("--since %s is after --until %s", since, until)
+	}
+	return Window{Days: days, Since: since, Until: until}, nil
+}
+
 // Build aggregates records over the last days (0 means all time) and judges
 // them against the inventory.
 func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *time.Location) *Report {
+	return BuildWindow(records, inv, now, Window{Days: days}, loc)
+}
+
+// BuildWindow is Build over any window. Unused-item findings still look back
+// from now: they judge the setup as it is installed today.
+func BuildWindow(records []*Record, inv []Inventory, now time.Time, w Window, loc *time.Location) *Report {
 	if loc == nil {
 		loc = time.Local
 	}
-	r := &Report{GeneratedAt: now, Days: days, Events: map[string]int{}, Inventory: inv}
-	from := ""
-	if days > 0 {
-		from = now.In(loc).AddDate(0, 0, -days+1).Format(time.DateOnly)
-		r.From = from
+	today := now.In(loc).Format(time.DateOnly)
+	last, _ := time.ParseInLocation(time.DateOnly, today, loc)
+	if w.Until != "" {
+		if t, err := time.ParseInLocation(time.DateOnly, w.Until, loc); err == nil {
+			last = t
+		}
 	}
-	inRange := func(day string) bool { return day != "" && day >= from }
+	r := &Report{GeneratedAt: now, Days: w.Days, Until: w.Until, Events: map[string]int{}, Inventory: inv}
+	from := w.Since
+	if from == "" && w.Days > 0 {
+		from = last.AddDate(0, 0, -w.Days+1).Format(time.DateOnly)
+	}
+	r.From = from
+	if first, err := time.ParseInLocation(time.DateOnly, w.Since, loc); err == nil {
+		r.Days = int(math.Round(last.Sub(first).Hours()/24)) + 1
+		r.Until = last.Format(time.DateOnly)
+	}
+	until := r.Until
+	inRange := func(day string) bool { return day != "" && day >= from && (until == "" || day <= until) }
 	cutoff90 := now.In(loc).AddDate(0, 0, -UnusedDays+1).Format(time.DateOnly)
 
 	models := map[string]*Spend{}
@@ -242,10 +296,15 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 			}{sa.AgentType, sa.File})
 		}
 
-		row := SessionRow{ID: rec.SessionID, Title: f.DisplayTitle(), Repo: rec.Repo, Start: f.Start,
+		ws := rec.Repo
+		if rec.Project != "" {
+			ws = rec.Project
+		}
+		row := SessionRow{ID: rec.SessionID, Title: f.DisplayTitle(), Repo: rec.Repo, Project: rec.Project, Start: f.Start,
 			ContextMax: f.ContextMax, ContextBig: f.ContextBig}
 		active := false
 		for _, x := range files {
+			ran := map[string]bool{}
 			for day, byModel := range x.file.Usage {
 				if !inRange(day) {
 					continue
@@ -263,7 +322,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 						dailyCost[day] = map[string]float64{}
 					}
 					dailyCost[day][ModelName(model)] += c.Total()
-					addSpend(repos, orUnknown(rec.Repo), c.Total(), t)
+					addSpend(repos, orUnknown(ws), c.Total(), t)
 					addSpend(accounts, orUnknown(rec.Root), c.Total(), t)
 					agent := x.agent
 					if agent == "" {
@@ -271,11 +330,15 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 					} else {
 						r.SubCost += c.Total()
 						row.SubCost += c.Total()
+						ran[agent+" on "+ModelName(model)] = true
 					}
 					addSpend(agents, agent+" on "+ModelName(model), c.Total(), t)
 					row.Cost += c.Total()
 					row.Turns += t.Turns
 				}
+			}
+			for name := range ran {
+				agents[name].Runs++
 			}
 			for day, byTool := range x.file.Tools {
 				if !inRange(day) {
@@ -372,7 +435,7 @@ func Build(records []*Record, inv []Inventory, now time.Time, days int, loc *tim
 	}
 
 	r.HookErrors = counts(hookErrors)
-	r.Daily = dailyRows(from, now.In(loc), dailyCost, dailyEvents)
+	r.Daily = dailyRows(from, last, dailyCost, dailyEvents)
 	r.BigResults = append([]BigResult(nil), big...)
 	sort.SliceStable(r.BigResults, func(i, j int) bool { return r.BigResults[i].Bytes > r.BigResults[j].Bytes })
 	r.BigResults = r.BigResults[:min(len(r.BigResults), maxBigResults)]
@@ -652,7 +715,7 @@ func pct(f float64) string { return fmt.Sprintf("%.0f%%", f*100) }
 
 // dailyRows lays out every day from the first through today. An all-time
 // range starts at the first day anything happened.
-func dailyRows(from string, today time.Time, cost map[string]map[string]float64, events map[string]map[string]int) []Day {
+func dailyRows(from string, end time.Time, cost map[string]map[string]float64, events map[string]map[string]int) []Day {
 	if from == "" {
 		for day := range cost {
 			if from == "" || day < from {
@@ -665,11 +728,11 @@ func dailyRows(from string, today time.Time, cost map[string]map[string]float64,
 			}
 		}
 	}
-	start, err := time.ParseInLocation(time.DateOnly, from, today.Location())
+	start, err := time.ParseInLocation(time.DateOnly, from, end.Location())
 	if err != nil {
 		return []Day{}
 	}
-	last := today.Format(time.DateOnly)
+	last := end.Format(time.DateOnly)
 	out := []Day{}
 	for d := start; ; d = d.AddDate(0, 0, 1) {
 		day := d.Format(time.DateOnly)
