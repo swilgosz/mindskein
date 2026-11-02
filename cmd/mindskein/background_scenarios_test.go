@@ -208,6 +208,31 @@ func TestServeInTheBackground(t *testing.T) {
 		}
 	})
 
+	t.Run("serve --background over a stale serve.json starts a server and records it in place of the stale one", func(t *testing.T) {
+		home := backgroundHome(t)
+		dead := exec.Command("sleep", "0")
+		if err := dead.Run(); err != nil {
+			t.Fatal(err)
+		}
+		stale := fmt.Sprintf(`{"pid":%d,"pid_started_at":%q,"port":1,"args":[],"started_at":%q}`,
+			dead.Process.Pid, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339))
+		os.WriteFile(filepath.Join(home, "serve.json"), []byte(stale), 0o600)
+
+		out := launchBackground(t, "--port", "0")
+		if strings.Contains(out, "already running") {
+			t.Fatalf("output = %q, want the stale record read as none running", out)
+		}
+		rec := readServed(t, home)
+		if rec.PID == dead.Process.Pid || rec.Port == 1 {
+			t.Fatalf("serve.json = %+v, still the stale record", rec)
+		}
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", rec.Port))
+		if err != nil {
+			t.Fatalf("the new background server does not answer on port %d: %v", rec.Port, err)
+		}
+		resp.Body.Close()
+	})
+
 	t.Run("serve --background together with --stop is a usage error", func(t *testing.T) {
 		home := backgroundHome(t)
 		if err := run([]string{"serve", "--background", "--stop"}, nil, io.Discard, io.Discard); err == nil {
