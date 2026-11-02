@@ -468,7 +468,7 @@ function usageRecommendations(d, el) {
           (f) => `<article class="finding">
             <div>${sevChip(f.severity)}</div>
             <div>
-              <h3>${esc(f.title)}</h3>
+              <h3>${esc(f.title)}${f.id ? ` <code class="finding-id">${esc(f.id)}</code>` : ""}</h3>
               <p>${esc(f.advice)}</p>
               ${f.saving ? `<p class="saving">Saving: ${esc(f.saving)}</p>` : ""}
               ${f.evidence && f.evidence.length ? `<details><summary>Evidence (${f.evidence.length})</summary><ul class="evidence">${f.evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></details>` : ""}

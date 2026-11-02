@@ -13,11 +13,6 @@ import (
 	"time"
 )
 
-func pending(t *testing.T, behaviour string) {
-	t.Helper()
-	t.Fatalf("PENDING: %s", behaviour)
-}
-
 func TestFindingIdentity(t *testing.T) {
 	t.Run("every finding in usage --json has an id from the list, and the same id on the next run", func(t *testing.T) {
 		root, recs, inv := everyFinding(t)
