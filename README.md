@@ -146,7 +146,8 @@ which is far longer than anything this should ever need.
 mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
-mindskein prune         # delete state past the retention horizon
+mindskein usage         # token spend and what to improve in your setup
+mindskein prune         # delete state past its retention horizon
 mindskein init          # register the hooks; --uninstall removes them
 ```
 
@@ -156,6 +157,31 @@ aged out, and every workstream rather than the newest few.
 Set `MINDSKEIN_PROJECT` before launching Claude to name a workstream that spans
 several folders and sessions. It is the only grouping key that does.
 
+### Usage
+
+`mindskein usage` reports the last 30 days: API-equivalent cost by model and
+workstream, cache hit rate, friction (interrupts, denials, compactions, hook
+errors), then **FIX FIRST** — failing hooks, skills and MCP servers unused in
+90 days and what they cost every session, context bloat, oversized tool
+results, subagents on top-tier models, heavy instruction files.
+
+The `Stop` hook keeps it current, reading only what each turn appended. For
+sessions from before the hooks were installed, run once:
+
+```sh
+mindskein usage --backfill            # ~/.claude and $CLAUDE_CONFIG_DIR
+mindskein usage --backfill ~/.claude-personal
+```
+
+Every Claude config directory lands in one store and keeps its origin: the
+report covers all of them with a per-account line, and `--root
+~/.claude-personal` reads one alone.
+
+`--days N` changes the range (`0` is all time), `--all` prints every finding,
+and `--json` prints the report as the machine-readable contract other surfaces
+read. Costs use API list prices: on a subscription they are the value consumed,
+not the bill.
+
 ## What it stores, and where
 
 ```
@@ -163,6 +189,7 @@ several folders and sessions. It is the only grouping key that does.
   config.toml       you write this; the app never rewrites it
   sessions/         one JSON file per session — id, folder, status, last tool
   handoffs/         one markdown file per session — title, times, last prompt
+  usage/            one JSON file per session — token counts, tool and skill use
   hooks.log         appended to only when a hook fails
 ```
 
@@ -212,10 +239,10 @@ definition. They are what to weigh before registering four global hooks:
   exits `2`. Those are bugs to prevent rather than absorb; there is no guard
   that can catch them.
 - **Old state is deleted on a timer, and deletion is permanent.** `prune` drops
-  session records after 30 days and handoffs after 90, and a sweep runs once a
-  day from the `Stop` hook. Set `sessions`/`handoffs` to `0` under
-  `[retention]` to keep everything forever. `mindskein prune --dry-run` shows
-  what would go.
+  session records after 30 days, handoffs after 90 and usage records after
+  180, and a sweep runs once a day from the `Stop` hook. Set
+  `sessions`/`handoffs`/`usage` to `0` under `[retention]` to keep everything
+  forever. `mindskein prune --dry-run` shows what would go.
 - **A session that dies hard keeps its last status for a while.** No hook fires
   when a terminal is killed, so the record simply stops changing. After 72
   hours the row is marked `running (stale)` and stops counting toward the

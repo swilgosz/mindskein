@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,4 +129,34 @@ func TestHideAfterConfiguration(t *testing.T) {
 			t.Errorf("HideAfter = %v, want %v", got, DefaultHideAfter)
 		}
 	})
+}
+
+// TestUsageRetention covers the usage store's horizon. Unused-item findings
+// read 90 days back, so a default at or below that would cut the history they
+// rest on.
+func TestUsageRetention(t *testing.T) {
+	t.Run("defaults past the 90 days unused findings read", func(t *testing.T) {
+		cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Retention.Usage.Duration(); got != DefaultPruneUsage || got <= 90*24*time.Hour {
+			t.Errorf("Usage = %v, want the default, above 90 days", got)
+		}
+	})
+
+	for body, want := range map[string]time.Duration{
+		"[retention]\nusage = \"365d\"\n": 365 * 24 * time.Hour,
+		"[retention]\nusage = 0\n":        0,
+	} {
+		t.Run("reads "+strings.TrimPrefix(strings.TrimSpace(body), "[retention]\n"), func(t *testing.T) {
+			cfg, err := Load(configFile(t, body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Retention.Usage.Duration(); got != want {
+				t.Errorf("Usage = %v, want %v", got, want)
+			}
+		})
+	}
 }

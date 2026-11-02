@@ -160,3 +160,37 @@ func TestPruneCommandDryRun(t *testing.T) {
 		t.Errorf("output must say what would go and under which rule:\n%s", stdout.String())
 	}
 }
+
+// TestPruneSweepsTheUsageStore covers the third store end to end: a usage
+// record holds titles, first prompts and tool inputs, so prune collects it
+// like a handoff.
+func TestPruneSweepsTheUsageStore(t *testing.T) {
+	home := pruneHome(t)
+	// The Stop hook sweeps once a day itself; stamp today's sweep so the
+	// record survives long enough for the command to be the one collecting it.
+	os.WriteFile(filepath.Join(home, pruneStamp), []byte("today\n"), 0o600)
+	dir := filepath.Join(t.TempDir(), "projects", "-tmp")
+	os.MkdirAll(dir, 0o700)
+	transcript := filepath.Join(dir, "old00006.jsonl")
+	last := time.Now().UTC().Add(-config.DefaultPruneUsage - 24*time.Hour).Format(time.RFC3339)
+	os.WriteFile(transcript, []byte(`{"type":"assistant","timestamp":"`+last+`","sessionId":"old00006",`+
+		`"message":{"id":"msg_1","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":2}}}`+"\n"), 0o600)
+	if err := run([]string{"hook", "stop"}, strings.NewReader(stopPayload(t, "old00006", transcript)), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(home, "usage", "old00006.json")
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("precondition: no usage record captured: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmdPrune(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("cmdPrune: %v", err)
+	}
+	if _, err := os.Stat(record); err == nil {
+		t.Error("a usage record past the horizon survived prune")
+	}
+	if !strings.Contains(stdout.String(), "usage record") {
+		t.Errorf("output must account for the usage store:\n%s", stdout.String())
+	}
+}

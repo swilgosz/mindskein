@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/brief"
@@ -20,6 +22,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/priorities"
 	"github.com/swilgosz/mindskein/internal/session"
 	"github.com/swilgosz/mindskein/internal/text"
+	insight "github.com/swilgosz/mindskein/internal/usage"
 )
 
 // version is overridden at build time with
@@ -82,8 +85,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
 			return cmdInit(args, stdout, stderr)
 		}},
-		{"prune", "delete session records and handoffs past the retention horizon", func(args []string, _ io.Reader) error {
+		{"prune", "delete session records, handoffs and usage records past their retention horizons", func(args []string, _ io.Reader) error {
 			return cmdPrune(args, stdout, stderr)
+		}},
+		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
+			return cmdUsage(args, stdout, stderr)
 		}},
 		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
 			return cmdHook(args, stdin, stderr)
@@ -403,16 +409,15 @@ func handleHook(event hook.Event, stdin io.Reader) error {
 	if event != hook.EventStop {
 		return nil
 	}
-	if err := recordHandoff(sess, payload, now); err != nil {
-		return err
-	}
+	handoffErr := recordHandoff(sess, payload, now)
+	usageErr := recordUsage(payload)
 	cfg, err := loadConfig()
 	if err != nil {
 		// A broken config must not stop the sweep from running on defaults,
 		// the same way it does not stop the brief from printing.
 		cfg = config.Defaults()
 	}
-	return pruneDaily(cfg, now)
+	return errors.Join(handoffErr, usageErr, pruneDaily(cfg, now))
 }
 
 // recordHandoff writes the session handoff once a turn completes.
@@ -429,6 +434,21 @@ func recordHandoff(sess *session.Session, payload *hook.Payload, now time.Time) 
 	// folders and sessions — export it before launching Claude. Empty is the
 	// normal case, and the reader falls back to the session title.
 	_, err = handoff.Record(store, sess, payload.TranscriptPath, os.Getenv("MINDSKEIN_PROJECT"), now)
+	return err
+}
+
+// recordUsage brings the session's usage summary up to date. It reads only
+// what was appended since the last turn, so it stays cheap however long the
+// session runs.
+func recordUsage(payload *hook.Payload) error {
+	if payload.TranscriptPath == "" {
+		return nil
+	}
+	store, err := insight.DefaultStore()
+	if err != nil {
+		return err
+	}
+	_, err = store.Capture(payload.TranscriptPath)
 	return err
 }
 
@@ -485,8 +505,8 @@ func cmdPrune(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-// prune sweeps both stores and returns one result per store. A failure on one
-// does not stop the other: they are independent directories, and a permission
+// prune sweeps every store and returns one result per store. A failure on one
+// does not stop the others: they are independent directories, and a permission
 // problem on handoffs is no reason to leave session records uncollected.
 func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResult, error) {
 	var results []*session.PruneResult
@@ -512,14 +532,26 @@ func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResul
 		results = append(results, res)
 	}
 
-	// Both are returned. Whatever was collected is worth reporting, and the
+	if store, err := insight.DefaultStore(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Usage), dryRun); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		results = append(results, res)
+	}
+
+	// All are returned. Whatever was collected is worth reporting, and the
 	// failure is still a failure: swallowing it because the other store
 	// happened to succeed would let a directory quietly stop being pruned.
 	return results, firstErr
 }
 
 // pruneStamp is the file recording the last sweep. Without it the hook would
-// walk both directories on every turn.
+// walk every store on every turn.
 const pruneStamp = "last-prune"
 
 // pruneDaily sweeps at most once a day, from the Stop hook.
@@ -641,4 +673,87 @@ func binaryPath() (string, error) {
 		return exe, nil
 	}
 	return resolved, nil
+}
+
+// cmdUsage reports spend and findings from the usage store. --backfill first
+// summarises transcripts the hooks never saw, from the default config roots
+// plus any named as arguments.
+func cmdUsage(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	days := fs.Int("days", 30, "report the last N days; 0 is all time")
+	all := fs.Bool("all", false, "print every finding and all of its evidence")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	backfill := fs.Bool("backfill", false, "summarise transcripts already on disk before reporting")
+	root := fs.String("root", "", "report one Claude config directory only, e.g. ~/.claude-personal")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	store, err := insight.DefaultStore()
+	if err != nil {
+		return err
+	}
+	if *backfill {
+		start := time.Now()
+		roots := store.Roots(fs.Args()...)
+		cfg, _ := loadConfig()
+		var since time.Time
+		if h := time.Duration(cfg.Retention.Usage); h > 0 {
+			since = start.Add(-h)
+		}
+		res, err := store.Backfill(roots, since)
+		fmt.Fprintf(stderr, "backfill: %d transcripts read, %d unchanged, %d older than retention, %s, from %s\n",
+			res.Parsed, res.Skipped, res.Expired, time.Since(start).Round(time.Millisecond), strings.Join(roots, ", "))
+		if err != nil {
+			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
+		}
+	}
+	report, err := buildUsage(store, time.Now(), *days, expandRoot(*root))
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+	return insight.Render(stdout, report, *all)
+}
+
+func expandRoot(p string) string {
+	if p == "" {
+		return ""
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return filepath.Clean(p)
+}
+
+func buildUsage(store *insight.Store, now time.Time, days int, root string) (*insight.Report, error) {
+	records, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	cwds := map[string][]string{}
+	seen := map[string]bool{}
+	for _, r := range records {
+		if r.File.CWD != "" && !seen[r.Root+r.File.CWD] {
+			seen[r.Root+r.File.CWD] = true
+			cwds[r.Root] = append(cwds[r.Root], r.File.CWD)
+		}
+	}
+	var inv []insight.Inventory
+	for _, root := range store.Roots() {
+		inv = append(inv, insight.Scan(root, cwds[root]))
+	}
+	if root != "" {
+		records, inv = insight.ForRoot(records, inv, root)
+	}
+	return insight.Build(records, inv, now, days, store.Loc), nil
 }
