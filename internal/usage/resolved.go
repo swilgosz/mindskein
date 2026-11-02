@@ -25,6 +25,52 @@ type Resolution struct {
 	Key        string    `json:"key,omitempty"`
 	ResolvedAt time.Time `json:"resolved_at"`
 	Note       string    `json:"note,omitempty"`
+
+	// Size is how big the file of a resolved heavy-instructions or
+	// long-memory-index item was: tokens for an instruction file, lines for
+	// a memory index. Zero for every other finding, and for entries written
+	// before sizes were recorded, which stay hidden whatever the size.
+	Size int `json:"size,omitempty"`
+
+	// Items is what a state finding listed when it was resolved as a whole,
+	// each with its size where the finding has one. Only those stay hidden;
+	// an item that appears later is reported as new.
+	Items []ResolvedItem `json:"items,omitempty"`
+}
+
+// ResolvedItem is one item a whole resolution covers.
+type ResolvedItem struct {
+	Key  string `json:"key"`
+	Size int    `json:"size,omitempty"`
+}
+
+// NewResolution resolves finding id, or its item key, of r at at. For a
+// state finding it records what r lists now: the item's size, or, resolving
+// the whole finding, each of its items with theirs.
+func NewResolution(r *Report, id, key string, at time.Time, note string) Resolution {
+	res := Resolution{ID: id, Key: key, ResolvedAt: at, Note: note}
+	if findingKinds[id] != stateKind {
+		return res
+	}
+	sizes := map[string]int{}
+	for _, in := range r.Inventory {
+		for _, c := range in.Context {
+			sizes[c.Path] = contextSize(c)
+		}
+	}
+	if key != "" {
+		res.Size = sizes[key]
+		return res
+	}
+	for _, f := range r.Findings {
+		if f.ID != id {
+			continue
+		}
+		for _, it := range f.Items {
+			res.Items = append(res.Items, ResolvedItem{Key: it.Key, Size: sizes[it.Key]})
+		}
+	}
+	return res
 }
 
 // Ref is how the resolution is addressed on the command line: <id> or
@@ -43,6 +89,13 @@ func (r Resolution) Ref() string {
 type ResolvedEntry struct {
 	Resolution
 	Hidden int `json:"hidden"`
+
+	// Cleared is set once an unused item the entry covers ran again on or
+	// after the day it was resolved: the entry hides nothing any more.
+	Cleared bool `json:"cleared,omitempty"`
+
+	// trimmed is set when some items of a whole entry were cleared.
+	trimmed bool
 }
 
 // ParseRef splits <id>[:<key>] at the first colon; hook keys contain colons
@@ -161,6 +214,35 @@ func (s *Resolved) Unresolve(id, key string) (Resolution, error) {
 	return gone, s.save(slices.Delete(all, i, i+1))
 }
 
+// Settle writes back what a report found of entries: those cleared are
+// dropped, and a whole entry keeps only the items not cleared. Entries are
+// matched on id, key and resolve time, so one resolved again since is kept.
+// It writes nothing when nothing was cleared.
+func (s *Resolved) Settle(entries []ResolvedEntry) error {
+	if !slices.ContainsFunc(entries, func(e ResolvedEntry) bool { return e.Cleared || e.trimmed }) {
+		return nil
+	}
+	all, err := s.Load()
+	if err != nil {
+		return err
+	}
+	kept := make([]Resolution, 0, len(all))
+	for _, r := range all {
+		i := slices.IndexFunc(entries, func(e ResolvedEntry) bool {
+			return e.ID == r.ID && e.Key == r.Key && e.ResolvedAt.Equal(r.ResolvedAt)
+		})
+		switch {
+		case i < 0:
+		case entries[i].Cleared:
+			continue
+		case entries[i].trimmed:
+			r.Items = entries[i].Items
+		}
+		kept = append(kept, r)
+	}
+	return s.save(kept)
+}
+
 func (s *Resolved) save(all []Resolution) error {
 	dir := filepath.Dir(s.Path)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
@@ -202,7 +284,6 @@ const (
 
 // findingKinds sorts findings into events, which happen at a time; rates,
 // which are a share over sessions; and states of the setup.
-
 var findingKinds = map[string]findingKind{
 	FindingHookFailures:      eventKind,
 	FindingBigResults:        eventKind,
@@ -234,11 +315,32 @@ func newResolutions(entries []ResolvedEntry) resolutions {
 	return rs
 }
 
-// hides returns the resolution that keeps an occurrence of finding id, on
-// item key ("" for findings without items), out of the report, or nil when
-// it shows. at is when the occurrence happened. A resolution of the item
-// takes the count over one of the whole finding.
+// hides returns the resolution that keeps an occurrence of event finding
+// id, on item key ("" for findings without items), out of the report, or nil
+// when it shows. at is when the occurrence happened: one after the resolve
+// time is new.
 func (rs resolutions) hides(id, key string, at time.Time) *ResolvedEntry {
+	return rs.find(id, key, func(e *ResolvedEntry) bool { return !at.After(e.ResolvedAt) })
+}
+
+// keeps returns the resolution that keeps item key of state finding id out
+// of the report, or nil when it shows. size is the item's size now, zero for
+// items without one.
+func (rs resolutions) keeps(id, key string, size int) *ResolvedEntry {
+	return rs.find(id, key, func(e *ResolvedEntry) bool { return e.covers(key, size) })
+}
+
+// whole returns the resolution of finding id as a whole, or nil.
+func (rs resolutions) whole(id string) *ResolvedEntry {
+	if rs == nil {
+		return nil
+	}
+	return rs[target{id, ""}]
+}
+
+// find returns the resolution of id, or of its item key, for which holds;
+// one of the item takes the count over one of the whole finding.
+func (rs resolutions) find(id, key string, holds func(*ResolvedEntry) bool) *ResolvedEntry {
 	if rs == nil {
 		return nil
 	}
@@ -248,22 +350,75 @@ func (rs resolutions) hides(id, key string, at time.Time) *ResolvedEntry {
 	}
 	var by *ResolvedEntry
 	for _, e := range candidates {
-		if e != nil && !happenedAgain(id, e.Resolution, at) {
+		if e != nil && holds(e) {
 			by = e
 		}
 	}
 	return by
 }
 
-// happenedAgain is the rule of each kind of finding: whether an occurrence
-// at at undoes resolution r. An event comes back with an occurrence after
-// the resolve time; a resolved rate or state finding stays hidden.
-func happenedAgain(id string, r Resolution, at time.Time) bool {
-	switch findingKinds[id] {
-	case eventKind:
-		return at.After(r.ResolvedAt)
-	default:
+// covers says whether e still hides item key, now size big. A whole entry
+// written before items were recorded covers every item.
+func (e *ResolvedEntry) covers(key string, size int) bool {
+	if e.Cleared {
 		return false
+	}
+	if e.Key != "" {
+		return withinSize(e.Size, size)
+	}
+	if len(e.Items) == 0 {
+		return true
+	}
+	i := slices.IndexFunc(e.Items, func(it ResolvedItem) bool { return it.Key == key })
+	return i >= 0 && withinSize(e.Items[i].Size, size)
+}
+
+// withinSize says whether a file now size big has not grown more than 10%
+// past the size recorded at resolve time. An unrecorded size never grows.
+func withinSize(recorded, size int) bool {
+	return recorded == 0 || size*10 <= recorded*11
+}
+
+// clearUsed clears what the resolutions of unused items cover once the item
+// ran on or after the local day it was resolved. It had no use when it was
+// resolved, so such a use is new, and a later unused stretch is reported as
+// new too. last holds the last day each root|kind:name ran.
+func (rs resolutions) clearUsed(inv []Inventory, last map[string]string, loc *time.Location) {
+	if rs == nil {
+		return
+	}
+	for _, in := range inv {
+		for _, it := range in.Items {
+			id := FindingUnusedSkills
+			if it.Kind == "agent" {
+				id = FindingUnusedAgents
+			}
+			rs.clearIfUsed(id, it.Name, itemLastUse(it, last), loc)
+		}
+		for _, m := range in.MCP {
+			rs.clearIfUsed(FindingUnusedMCP, m.Name, mcpLastUse(m, last), loc)
+		}
+	}
+}
+
+func (rs resolutions) clearIfUsed(id, key, lastDay string, loc *time.Location) {
+	if lastDay == "" {
+		return
+	}
+	usedSince := func(e *ResolvedEntry) bool {
+		return e != nil && !e.Cleared && lastDay >= e.ResolvedAt.In(loc).Format(time.DateOnly)
+	}
+	if e := rs[target{id, key}]; usedSince(e) {
+		e.Cleared = true
+	}
+	if e := rs[target{id, ""}]; usedSince(e) {
+		i := slices.IndexFunc(e.Items, func(it ResolvedItem) bool { return it.Key == key })
+		if i < 0 {
+			return
+		}
+		e.Items = slices.Delete(slices.Clone(e.Items), i, i+1)
+		e.trimmed = true
+		e.Cleared = len(e.Items) == 0
 	}
 }
 

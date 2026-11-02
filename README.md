@@ -205,13 +205,25 @@ from the report `usage` would print with the same `--days`, `--since`,
 `--until` and `--root` (30 days by default); anything else is an error listing
 the valid ids. `big-results`, `context-bloat`, `cache-writes` and
 `skill-listing` list no items and resolve only as a whole. Resolving it again
-replaces the time and note. Resolutions hold for every config root.
+replaces the time, note and recorded size. Resolutions hold for every config
+root. Resolving a finding that lists things covers only what it lists now: a
+skill or file that shows up later is reported as new.
 
-A resolved hook failure, big result or top-tier subagent run stays hidden until
-it happens again after the resolve time, and the finding then counts only the
-new occurrences. The other findings stay hidden while resolved. A finding with
-some items resolved shows the rest, its title, severity and saving counted from
-them. The report ends with how many findings and items are hidden (`3 resolved
+When a resolved finding comes back depends on its kind:
+
+- **Events** (`hook-failures`, `big-results`, `top-tier-subagents`): a newer
+  occurrence, and the finding then counts only the new ones.
+- **Rates** (`context-bloat`, `cache-writes`, `skill-listing`): the rate over
+  the sessions started after the resolve time crosses the threshold again; the
+  title shows that rate.
+- **Unused** (`unused-skills`, `unused-agents`, `unused-mcp`): the item is used
+  again. That use clears the resolution, which `usage` then drops from
+  `resolved.json`, so a later unused stretch is reported as new.
+- **File size** (`heavy-instructions`, `long-memory-index`): the file grows more
+  than 10% past its size (tokens, or lines for a memory index) when resolved.
+
+A finding with some items resolved shows the rest, its title, severity and
+saving counted from them. The report ends with how many findings and items are hidden (`3 resolved
 · mindskein resolve --list`), `--json` lists each resolution under `resolved`
 with how much it hides, and `--include-resolved` reports as if nothing were
 resolved, for before/after comparisons.
