@@ -56,6 +56,10 @@ type BigResult struct {
 	Tool  string `json:"tool"`
 	Input string `json:"input"`
 	Bytes int    `json:"bytes"`
+
+	// At is when the result came back; zero in records captured before it
+	// was kept. File.ResultAt falls back for those.
+	At time.Time `json:"at"`
 }
 
 // File is the summary of one transcript. It is built incrementally: Pending
@@ -83,7 +87,12 @@ type File struct {
 	Hours map[string]map[string]int `json:"hours,omitempty"`
 
 	HookErrors map[string]int `json:"hook_errors,omitempty"`
-	Big        []BigResult    `json:"big,omitempty"`
+
+	// HookLast is when each hook in HookErrors last failed, under the same
+	// key. File.HookFailedAt falls back for records captured before it.
+	HookLast map[string]time.Time `json:"hook_last,omitempty"`
+
+	Big []BigResult `json:"big,omitempty"`
 
 	Pending map[string]pendingTool `json:"pending,omitempty"`
 	Last    *lastMessage           `json:"last,omitempty"`
@@ -347,10 +356,17 @@ func (f *File) line(line string, loc *time.Location) {
 			if name == "" {
 				name = a.Event
 			}
+			key := name + " :: " + clip(a.Command, 200)
 			if f.HookErrors == nil {
 				f.HookErrors = map[string]int{}
 			}
-			f.HookErrors[name+" :: "+clip(a.Command, 200)]++
+			f.HookErrors[key]++
+			if ts := rec.Timestamp; !ts.IsZero() && ts.After(f.HookLast[key]) {
+				if f.HookLast == nil {
+					f.HookLast = map[string]time.Time{}
+				}
+				f.HookLast[key] = ts
+			}
 		case "skill_listing":
 			if len(a.Content) > f.ListingChars {
 				f.ListingChars = len(a.Content)
@@ -521,7 +537,7 @@ func (f *File) user(rec record, day string, hour, lineLen int) {
 	for _, b := range blocks {
 		switch b.Type {
 		case "tool_result":
-			f.toolResult(day, b, lineLen)
+			f.toolResult(day, rec.Timestamp, b, lineLen)
 		case "text":
 			text = append(text, b.Text)
 		}
@@ -557,7 +573,7 @@ func (f *File) userText(rec record, day string, hour int, s string) {
 	}
 }
 
-func (f *File) toolResult(day string, b contentBlock, lineLen int) {
+func (f *File) toolResult(day string, at time.Time, b contentBlock, lineLen int) {
 	p, ok := f.Pending[b.ToolUseID]
 	name := p.Name
 	if !ok {
@@ -578,7 +594,7 @@ func (f *File) toolResult(day string, b contentBlock, lineLen int) {
 		f.event(day, EventDenials, 1)
 	}
 	if size >= BigResultBytes {
-		f.addBig(BigResult{Day: day, Tool: name, Input: p.Input, Bytes: size})
+		f.addBig(BigResult{Day: day, Tool: name, Input: p.Input, Bytes: size, At: at})
 	}
 }
 
@@ -634,6 +650,25 @@ func hint(in map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// HookFailedAt is when the hook, keyed as in HookErrors, last failed in this
+// session. A record captured before failure times were kept has none, and
+// the session's end stands in: no failure of it can be later than that.
+func (f *File) HookFailedAt(hook string) time.Time {
+	if t, ok := f.HookLast[hook]; ok && !t.IsZero() {
+		return t
+	}
+	return f.End
+}
+
+// ResultAt is when a big result of this session came back, or the session's
+// end for a record captured before result times were kept.
+func (f *File) ResultAt(b BigResult) time.Time {
+	if !b.At.IsZero() {
+		return b.At
+	}
+	return f.End
 }
 
 // DisplayTitle prefers a human rename, then the generated title, then the

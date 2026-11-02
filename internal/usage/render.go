@@ -10,7 +10,9 @@ import (
 // EmptyHint is what an empty store prints instead of a page of zeroes.
 const EmptyHint = "No usage recorded yet. Run `mindskein usage --backfill` to summarise past sessions; new ones are captured as they run."
 
-// Render prints the report. all lifts the caps on findings and their evidence.
+// Render prints the report, each finding with its id. all lifts the cap on
+// findings and lists every item of a finding with its <id>:<key> address in
+// place of the capped evidence.
 func Render(w io.Writer, r *Report, all bool) error {
 	p := &printer{w: w}
 	if r.Sessions == 0 {
@@ -72,8 +74,17 @@ func Render(w io.Writer, r *Report, all bool) error {
 		if f.Saving != "" {
 			title += "  (" + f.Saving + ")"
 		}
+		if f.ID != "" {
+			title += "  [" + f.ID + "]"
+		}
 		p.line(fmt.Sprintf("  %s %s", mark, title))
 		p.line("      " + Tilde(f.Advice))
+		if all && len(f.Items) > 0 {
+			for _, it := range f.Items {
+				p.line(fmt.Sprintf("      - %s  [%s:%s]", Tilde(oneLine(it.Text)), f.ID, it.Key))
+			}
+			continue
+		}
 		for j, e := range f.Evidence {
 			if j == evidence {
 				p.line(fmt.Sprintf("      … %d more", len(f.Evidence)-evidence))

@@ -206,6 +206,7 @@ table.plain tr:last-child td { border-bottom: 0; }
 .finding:first-child { border-top: 0; padding-top: 4px; }
 .finding p { margin: 0 0 6px; color: var(--text-2); }
 .finding .saving { color: var(--text); font-size: 13px; }
+.finding .finding-id { font-weight: 400; color: var(--text-2); margin-left: 6px; }
 details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
 .evidence { margin: 6px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
 .evidence li { overflow-wrap: anywhere; margin: 2px 0; }

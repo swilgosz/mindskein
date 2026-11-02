@@ -184,6 +184,12 @@ report covers all of them with a per-account line, and `--root
 and `--json` prints the report as the machine-readable contract other surfaces
 read.
 
+Each finding shows an id that stays the same from run to run, such as
+`[hook-failures]` or `[unused-skills]`. Findings that name things (hooks,
+skills, agents, MCP servers, subagent rows, instruction files) carry items:
+`--all` lists every one with its address, `<id>:<key>`, and `--json` gives
+`id` and `items` (`key`, `text`) beside the capped `evidence`.
+
 To measure a change, compare fixed windows rather than "the last 30 days":
 
 ```sh

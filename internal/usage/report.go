@@ -109,13 +109,43 @@ func counts(m map[string]int) []Count {
 	return out
 }
 
+// Finding ids name a kind of finding. They stay the same from run to run
+// whatever the numbers in the title, so a finding can be referred to later.
+const (
+	FindingHookFailures      = "hook-failures"
+	FindingUnusedSkills      = "unused-skills"
+	FindingUnusedAgents      = "unused-agents"
+	FindingUnusedMCP         = "unused-mcp"
+	FindingContextBloat      = "context-bloat"
+	FindingCacheWrites       = "cache-writes"
+	FindingBigResults        = "big-results"
+	FindingTopTierSubagents  = "top-tier-subagents"
+	FindingSkillListing      = "skill-listing"
+	FindingHeavyInstructions = "heavy-instructions"
+	FindingLongMemoryIndex   = "long-memory-index"
+)
+
 // Finding is one thing worth fixing, with the evidence behind it.
 type Finding struct {
+	ID       string   `json:"id"`
 	Severity Severity `json:"severity"`
 	Title    string   `json:"title"`
 	Advice   string   `json:"advice"`
 	Saving   string   `json:"saving,omitempty"`
+
+	// Evidence is a capped, readable sample of what the finding rests on.
 	Evidence []string `json:"evidence,omitempty"`
+
+	// Items lists every thing the finding names, uncapped, for the findings
+	// that name things.
+	Items []FindingItem `json:"items,omitempty"`
+}
+
+// FindingItem is one thing a finding names. Key is the same on every run and
+// addresses the item as <finding id>:<key>; Text is how it reads.
+type FindingItem struct {
+	Key  string `json:"key"`
+	Text string `json:"text"`
 }
 
 // Report is the JSON contract every usage surface reads.
@@ -368,6 +398,7 @@ func BuildWindow(records []*Record, inv []Inventory, now time.Time, w Window, lo
 			}
 			for _, b := range x.file.Big {
 				if inRange(b.Day) {
+					b.At = x.file.ResultAt(b)
 					big = append(big, b)
 				}
 			}
@@ -446,7 +477,7 @@ func BuildWindow(records []*Record, inv []Inventory, now time.Time, w Window, lo
 	if r.HistoryDays < UnusedDays {
 		caveat := fmt.Sprintf("Recorded history covers only %d days, so this counts as unused anything not used in those days. `mindskein usage --backfill` adds transcripts still on disk, but Claude Code deletes older ones per `cleanupPeriodDays`; from here on the store keeps every session, so the full %d days fill in as you work.", r.HistoryDays, UnusedDays)
 		for i := range r.Findings {
-			if strings.Contains(r.Findings[i].Title, "in 90 days") {
+			if id := r.Findings[i].ID; id == FindingUnusedSkills || id == FindingUnusedAgents || id == FindingUnusedMCP {
 				r.Findings[i].Severity = Warning
 				r.Findings[i].Advice += " " + caveat
 			}
@@ -514,9 +545,13 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 		if n > 50 {
 			sev = Critical
 		}
-		out = append(out, Finding{Severity: sev, Title: fmt.Sprintf("%d hook failures", n),
+		var items []FindingItem
+		for _, c := range counts(hookErrors) {
+			items = append(items, FindingItem{Key: c.Name, Text: fmt.Sprintf("%d× %s", c.Count, c.Name)})
+		}
+		out = append(out, Finding{ID: FindingHookFailures, Severity: sev, Title: fmt.Sprintf("%d hook failures", n),
 			Advice:   "A hook that fails every session start adds latency and its context never arrives. Fix the path or remove the hook or plugin.",
-			Evidence: topCounts(hookErrors, 8)})
+			Evidence: topCounts(hookErrors, 8), Items: items})
 	}
 
 	var unusedSkills, unusedAgents []Item
@@ -542,45 +577,63 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 			worst = max(worst, tok)
 		}
 		sort.Strings(parts)
-		sort.Slice(unusedSkills, func(i, j int) bool { return unusedSkills[i].ListingTok > unusedSkills[j].ListingTok })
+		sort.Slice(unusedSkills, func(i, j int) bool {
+			if unusedSkills[i].ListingTok != unusedSkills[j].ListingTok {
+				return unusedSkills[i].ListingTok > unusedSkills[j].ListingTok
+			}
+			return unusedSkills[i].Name < unusedSkills[j].Name
+		})
 		var ev []string
-		for _, it := range unusedSkills[:min(len(unusedSkills), 15)] {
-			ev = append(ev, fmt.Sprintf("%s (%s, %s, %d tok)", it.Name, it.Source, it.Root, it.ListingTok))
+		var items []FindingItem
+		for i, it := range unusedSkills {
+			text := fmt.Sprintf("%s (%s, %s, %d tok)", it.Name, it.Source, it.Root, it.ListingTok)
+			if i < 15 {
+				ev = append(ev, text)
+			}
+			items = append(items, FindingItem{Key: it.Name, Text: text})
 		}
 		sev := Warning
 		if worst > 2000 {
 			sev = Serious
 		}
-		out = append(out, Finding{Severity: sev,
+		out = append(out, Finding{ID: FindingUnusedSkills, Severity: sev,
 			Title:    fmt.Sprintf("%d skills and commands unused in %d days", len(unusedSkills), UnusedDays),
 			Advice:   "Their names and descriptions load into every session's skill listing (" + strings.Join(parts, ", ") + "). Archive what you don't use, or disable whole plugins.",
 			Saving:   fmt.Sprintf("≈%d tokens/session", worst),
-			Evidence: ev})
+			Evidence: ev, Items: items})
 	}
 	if len(unusedAgents) > 0 {
 		var ev []string
-		for _, it := range unusedAgents[:min(len(unusedAgents), 15)] {
-			ev = append(ev, it.Name+" ("+it.Source+", "+it.Root+")")
+		var items []FindingItem
+		for i, it := range unusedAgents {
+			text := it.Name + " (" + it.Source + ", " + it.Root + ")"
+			if i < 15 {
+				ev = append(ev, text)
+			}
+			items = append(items, FindingItem{Key: it.Name, Text: text})
 		}
-		out = append(out, Finding{Severity: Warning,
+		out = append(out, Finding{ID: FindingUnusedAgents, Severity: Warning,
 			Title:    fmt.Sprintf("%d agents never spawned in %d days", len(unusedAgents), UnusedDays),
 			Advice:   "Agent descriptions are listed in every session. Remove agents you only reach through a slash command.",
-			Evidence: ev})
+			Evidence: ev, Items: items})
 	}
 
 	var unusedMCP []string
+	var mcpItems []FindingItem
 	for _, in := range inv {
 		for _, m := range in.MCP {
 			if mcpUses(m, uses) == 0 {
-				unusedMCP = append(unusedMCP, m.Name+" ("+m.Root+": "+strings.Join(m.Scopes, ", ")+")")
+				text := m.Name + " (" + m.Root + ": " + strings.Join(m.Scopes, ", ") + ")"
+				unusedMCP = append(unusedMCP, text)
+				mcpItems = append(mcpItems, FindingItem{Key: m.Name, Text: text})
 			}
 		}
 	}
 	if len(unusedMCP) > 0 {
-		out = append(out, Finding{Severity: Warning,
+		out = append(out, Finding{ID: FindingUnusedMCP, Severity: Warning,
 			Title:    fmt.Sprintf("%d MCP servers with no calls in %d days", len(unusedMCP), UnusedDays),
 			Advice:   "Each server adds tools and a connection at startup. Remove it or scope it to the projects that use it.",
-			Evidence: unusedMCP})
+			Evidence: unusedMCP, Items: mcpItems})
 	}
 
 	if turns > 0 {
@@ -590,14 +643,14 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 			if share > 0.3 {
 				sev = Serious
 			}
-			out = append(out, Finding{Severity: sev,
+			out = append(out, Finding{ID: FindingContextBloat, Severity: sev,
 				Title:  fmt.Sprintf("%s of turns run above %dK context", pct(share), BigContext/1000),
 				Advice: "Every turn re-reads the whole context. /clear between unrelated tasks and keep the auto-compact window modest."})
 		}
 	}
 
 	if total > 0 && r.Cost.CacheWrite/total > 0.25 {
-		out = append(out, Finding{Severity: Warning,
+		out = append(out, Finding{ID: FindingCacheWrites, Severity: Warning,
 			Title:  fmt.Sprintf("Cache writes are %s of spend", pct(r.Cost.CacheWrite/total)),
 			Advice: "New sessions, model or MCP switches, compaction, and breaks longer than the cache lifetime all rewrite the context. Resume within the cache window or start fresh."})
 	}
@@ -616,7 +669,7 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 			}
 		}
 		if n > 0 {
-			out = append(out, Finding{Severity: Warning,
+			out = append(out, Finding{ID: FindingBigResults, Severity: Warning,
 				Title:    fmt.Sprintf("%d tool results over 30K characters", n),
 				Advice:   "Large outputs stay in context for the rest of the session. Narrow reads and searches, or push them into a subagent.",
 				Evidence: ev})
@@ -624,54 +677,62 @@ func findings(r *Report, inv []Inventory, uses map[string]int, hookErrors map[st
 	}
 
 	var pricey []string
+	var priceyItems []FindingItem
 	pc := 0.0
 	for _, a := range r.Agents {
 		if strings.HasPrefix(a.Name, "(main") || a.Cost < 5 {
 			continue
 		}
 		if strings.Contains(a.Name, "opus") || strings.Contains(a.Name, "fable") {
-			pricey = append(pricey, fmt.Sprintf("%s: $%.2f", a.Name, a.Cost))
+			text := fmt.Sprintf("%s: $%.2f", a.Name, a.Cost)
+			pricey = append(pricey, text)
+			priceyItems = append(priceyItems, FindingItem{Key: a.Name, Text: text})
 			pc += a.Cost
 		}
 	}
 	if len(pricey) > 0 {
-		out = append(out, Finding{Severity: Warning, Title: "Subagents running on top-tier models",
+		out = append(out, Finding{ID: FindingTopTierSubagents, Severity: Warning, Title: "Subagents running on top-tier models",
 			Advice:   "Search-shaped subagents rarely need Opus or Fable. Pin model: sonnet or haiku in the agent definition.",
 			Saving:   fmt.Sprintf("$%.2f in range", pc),
-			Evidence: pricey})
+			Evidence: pricey, Items: priceyItems})
 	}
 
 	if len(listing) > 0 {
 		avg := sumSlice(listing) / len(listing) / 4
 		if avg > 5000 {
-			out = append(out, Finding{Severity: Warning,
+			out = append(out, Finding{ID: FindingSkillListing, Severity: Warning,
 				Title:  fmt.Sprintf("Skill listing averages ≈%d tokens per session", avg),
 				Advice: "Shorten long descriptions and prune unused skills."})
 		}
 	}
 
 	var heavy, longIdx []string
+	var heavyItems, longIdxItems []FindingItem
 	for _, in := range inv {
 		for _, c := range in.Context {
 			switch {
 			case c.Kind != "memory-index" && c.Chars/4 > 4000:
-				heavy = append(heavy, fmt.Sprintf("%s (≈%d tok)", c.Path, c.Chars/4))
+				text := fmt.Sprintf("%s (≈%d tok)", c.Path, c.Chars/4)
+				heavy = append(heavy, text)
+				heavyItems = append(heavyItems, FindingItem{Key: c.Path, Text: text})
 			case c.Kind == "memory-index" && c.Lines > 120:
-				longIdx = append(longIdx, fmt.Sprintf("%s (%d lines)", c.Path, c.Lines))
+				text := fmt.Sprintf("%s (%d lines)", c.Path, c.Lines)
+				longIdx = append(longIdx, text)
+				longIdxItems = append(longIdxItems, FindingItem{Key: c.Path, Text: text})
 			}
 		}
 	}
 	if len(heavy) > 0 {
-		out = append(out, Finding{Severity: Warning,
+		out = append(out, Finding{ID: FindingHeavyInstructions, Severity: Warning,
 			Title:    fmt.Sprintf("%d always-loaded instruction files above 4K tokens", len(heavy)),
 			Advice:   "Move rarely needed sections into skills or linked docs that load on demand.",
-			Evidence: heavy})
+			Evidence: heavy, Items: heavyItems})
 	}
 	if len(longIdx) > 0 {
-		out = append(out, Finding{Severity: Warning,
+		out = append(out, Finding{ID: FindingLongMemoryIndex, Severity: Warning,
 			Title:    fmt.Sprintf("%d memory indexes over 120 lines", len(longIdx)),
 			Advice:   "The index loads every session. Merge or delete stale entries.",
-			Evidence: longIdx})
+			Evidence: longIdx, Items: longIdxItems})
 	}
 
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Severity < out[j].Severity })

@@ -21,7 +21,7 @@ const (
 
 	// recordVersion invalidates stored summaries when the parser changes what
 	// it counts; a stale record is re-read from offset zero.
-	recordVersion = 3
+	recordVersion = 4
 )
 
 // Source is the transcript a summary was read from, and how far.
