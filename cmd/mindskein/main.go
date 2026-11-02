@@ -94,6 +94,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"serve", "open the dashboard on 127.0.0.1: usage, overview, setup, health", func(args []string, _ io.Reader) error {
 			return cmdServe(args, stdout, stderr)
 		}},
+		{"upgrade", "build the newest mindskein with Go and replace this binary", func(args []string, _ io.Reader) error {
+			return cmdUpgrade(args, stdout, stderr)
+		}},
 		{"hook", "handle a Claude Code hook payload on stdin", func(args []string, stdin io.Reader) error {
 			return cmdHook(args, stdin, stderr)
 		}},
