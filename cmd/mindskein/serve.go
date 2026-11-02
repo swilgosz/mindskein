@@ -134,7 +134,11 @@ func serveHandler(cfg config.Config) http.Handler {
 				if err != nil {
 					return nil, err
 				}
-				return buildUsage(store, time.Now(), window, expandRoot(r.URL.Query().Get("root")))
+				resolved, err := loadResolved()
+				if err != nil {
+					return nil, err
+				}
+				return buildUsage(store, time.Now(), window, expandRoot(r.URL.Query().Get("root")), resolved)
 			},
 			"brief": func(r *http.Request) (any, error) {
 				all := r.URL.Query().Get("all") == "1"
@@ -148,7 +152,7 @@ func serveHandler(cfg config.Config) http.Handler {
 				if err != nil {
 					return nil, err
 				}
-				report, err := buildUsage(store, time.Now(), insight.Window{Days: queryDays(r)}, "")
+				report, err := buildUsage(store, time.Now(), insight.Window{Days: queryDays(r)}, "", nil)
 				if err != nil {
 					return nil, err
 				}
