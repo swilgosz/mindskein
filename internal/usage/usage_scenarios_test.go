@@ -195,7 +195,7 @@ func TestCapture(t *testing.T) {
 		os.WriteFile(filepath.Join(subDir, "agent-a1.meta.json"), []byte(`{"agentType":"Explore"}`), 0o600)
 
 		store := &Store{Dir: t.TempDir(), Loc: warsaw}
-		if _, err := store.Capture(main); err != nil {
+		if _, err := store.Capture(main, ""); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := store.Load("sess0001")
@@ -216,10 +216,10 @@ func TestCapture(t *testing.T) {
 		root := t.TempDir()
 		path := writeTranscript(t, root, "sess0001", assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5))
 		store := &Store{Dir: t.TempDir(), Loc: warsaw}
-		if res, _ := store.Capture(path); res.Parsed != 1 {
+		if res, _ := store.Capture(path, ""); res.Parsed != 1 {
 			t.Fatalf("first capture parsed %d", res.Parsed)
 		}
-		if res, _ := store.Capture(path); res.Parsed != 0 || res.Skipped != 1 {
+		if res, _ := store.Capture(path, ""); res.Parsed != 0 || res.Skipped != 1 {
 			t.Errorf("second capture = %+v, want nothing parsed", res)
 		}
 	})
@@ -229,14 +229,14 @@ func TestCapture(t *testing.T) {
 		first := assistant(t, "2026-10-15T10:00:00Z", "msg_1", "claude-opus-5-5", 5)
 		path := writeTranscript(t, root, "sess0001", first)
 		store := &Store{Dir: t.TempDir(), Loc: warsaw}
-		store.Capture(path)
+		store.Capture(path, "")
 		more := assistant(t, "2026-10-15T10:00:01Z", "msg_1", "claude-opus-5-5", 40) + assistant(t, "2026-10-15T10:01:00Z", "msg_2", "claude-opus-5-5", 2)
 		fh, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 		fh.WriteString(more)
 		fh.Close()
 		future := time.Now().Add(time.Minute)
 		os.Chtimes(path, future, future)
-		if _, err := store.Capture(path); err != nil {
+		if _, err := store.Capture(path, ""); err != nil {
 			t.Fatal(err)
 		}
 		rec, _ := store.Load("sess0001")

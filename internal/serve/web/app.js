@@ -510,6 +510,8 @@ function usageTokens(d, el) {
     [
       { key: "name", label: "Agent and model", wrap: true },
       { key: "turns", label: "Turns", num: true, fmt: fmt.int },
+      { key: "runs", label: "Runs", num: true, fmt: (v) => (v ? fmt.int(v) : "") },
+      { key: "per_run", label: "Per run", num: true, value: (r) => (r.runs ? r.cost / r.runs : 0), fmt: (v) => (v ? fmt.usd(v) : "") },
       { key: "share", label: "Share", num: true, fmt: fmt.pct },
       { key: "cost", label: "Cost", num: true, fmt: fmt.usd, bar: true },
     ],
@@ -521,7 +523,7 @@ function usageTokens(d, el) {
     card(el, "Most expensive sessions", { note: "Context is the input and cache tokens of one turn. Big turns run above 150K context." }),
     [
       { key: "start", label: "Date", fmt: fmt.date, nowrap: true },
-      { key: "title", label: "Session", wrap: true, value: (r) => r.title || r.id, html: (r) => `${esc(r.title || r.id)}<div class="mono sub-id">${esc(r.repo)} · ${esc(String(r.id || "").slice(0, 8))}</div>` },
+      { key: "title", label: "Session", wrap: true, value: (r) => r.title || r.id, html: (r) => `${esc(r.title || r.id)}<div class="mono sub-id">${esc(r.project || r.repo)} · ${esc(String(r.id || "").slice(0, 8))}</div>` },
       { key: "prompts", label: "Prompts", num: true, fmt: fmt.int },
       { key: "turns", label: "Turns", num: true, fmt: fmt.int },
       { key: "context_max", label: "Max context", num: true, fmt: fmt.tok },

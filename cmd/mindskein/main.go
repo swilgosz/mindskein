@@ -540,7 +540,7 @@ func recordUsage(payload *hook.Payload) error {
 	if err != nil {
 		return err
 	}
-	_, err = store.Capture(payload.TranscriptPath)
+	_, err = store.Capture(payload.TranscriptPath, os.Getenv("MINDSKEIN_PROJECT"))
 	return err
 }
 
@@ -774,11 +774,17 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	days := fs.Int("days", 30, "report the last N days; 0 is all time")
+	since := fs.String("since", "", "report from this day, YYYY-MM-DD, instead of the last N days")
+	until := fs.String("until", "", "end the report on this day, YYYY-MM-DD, instead of today")
 	all := fs.Bool("all", false, "print every finding and all of its evidence")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	backfill := fs.Bool("backfill", false, "summarise transcripts already on disk before reporting")
 	root := fs.String("root", "", "report one Claude config directory only, e.g. ~/.claude-personal")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	window, err := insight.ParseWindow(*days, *since, *until)
+	if err != nil {
 		return err
 	}
 	store, err := insight.DefaultStore()
@@ -800,7 +806,7 @@ func cmdUsage(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, "mindskein: backfill: %v\n", err)
 		}
 	}
-	report, err := buildUsage(store, time.Now(), *days, expandRoot(*root))
+	report, err := buildUsage(store, time.Now(), window, expandRoot(*root))
 	if err != nil {
 		return err
 	}
@@ -827,7 +833,7 @@ func expandRoot(p string) string {
 	return filepath.Clean(p)
 }
 
-func buildUsage(store *insight.Store, now time.Time, days int, root string) (*insight.Report, error) {
+func buildUsage(store *insight.Store, now time.Time, window insight.Window, root string) (*insight.Report, error) {
 	records, err := store.List()
 	if err != nil {
 		return nil, err
@@ -847,5 +853,5 @@ func buildUsage(store *insight.Store, now time.Time, days int, root string) (*in
 	if root != "" {
 		records, inv = insight.ForRoot(records, inv, root)
 	}
-	return insight.Build(records, inv, now, days, store.Loc), nil
+	return insight.BuildWindow(records, inv, now, window, store.Loc), nil
 }

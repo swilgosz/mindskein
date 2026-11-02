@@ -66,7 +66,11 @@ func serveHandler(cfg config.Config) http.Handler {
 				if err != nil {
 					return nil, err
 				}
-				return buildUsage(store, time.Now(), queryDays(r), expandRoot(r.URL.Query().Get("root")))
+				window, err := queryWindow(r)
+				if err != nil {
+					return nil, err
+				}
+				return buildUsage(store, time.Now(), window, expandRoot(r.URL.Query().Get("root")))
 			},
 			"brief": func(r *http.Request) (any, error) {
 				all := r.URL.Query().Get("all") == "1"
@@ -80,7 +84,7 @@ func serveHandler(cfg config.Config) http.Handler {
 				if err != nil {
 					return nil, err
 				}
-				report, err := buildUsage(store, time.Now(), queryDays(r), "")
+				report, err := buildUsage(store, time.Now(), insight.Window{Days: queryDays(r)}, "")
 				if err != nil {
 					return nil, err
 				}
@@ -96,6 +100,13 @@ func queryDays(r *http.Request) int {
 		return n
 	}
 	return 30
+}
+
+// queryWindow reads ?days=, ?since= and ?until=, checked as the command
+// checks its flags.
+func queryWindow(r *http.Request) (insight.Window, error) {
+	q := r.URL.Query()
+	return insight.ParseWindow(queryDays(r), q.Get("since"), q.Get("until"))
 }
 
 type setupReport struct {
