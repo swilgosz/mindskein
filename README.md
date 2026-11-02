@@ -215,6 +215,19 @@ password = "something long"
 
 `--port` picks another port.
 
+To keep it running after the terminal closes:
+
+```sh
+mindskein serve --background   # prints the URL and pid, then returns
+mindskein serve --stop         # SIGTERM, then SIGKILL after 5 s
+```
+
+`--background` takes the other flags (`--port`) and remembers them in
+`~/.mindskein/serve.json`; the server's output goes to `~/.mindskein/serve.log`.
+Starting a second one says where the first is running instead. `--stop` signals
+only the process it started: a recorded pid now held by something else is left
+alone.
+
 ## What it stores, and where
 
 ```
@@ -224,6 +237,8 @@ password = "something long"
   handoffs/         one markdown file per session — title, times, last prompt
   usage/            one JSON file per session — token counts, tool and skill use
   hooks.log         appended to only when a hook fails
+  serve.json        the background server, while one runs: pid, port, flags
+  serve.log         the background server's output
 ```
 
 **Nothing leaves your machine.** No uploads, no telemetry, no account, no third-party service. The store above is all of it, and it is yours to delete.

@@ -1,6 +1,10 @@
 // Package serve is the web view: one page per command, each reading JSON built
 // by the code behind that command. The page is embedded and loads nothing from
 // outside the binary.
+//
+// A server can also run detached, recorded in serve.json so that it can be
+// found, stopped and started again with the same flags: see Start, Running
+// and Stop.
 package serve
 
 import (

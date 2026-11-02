@@ -48,7 +48,7 @@ func backgroundHome(t *testing.T) string {
 	return home
 }
 
-func startBackground(t *testing.T, args ...string) string {
+func launchBackground(t *testing.T, args ...string) string {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	if err := run(append([]string{"serve", "--background"}, args...), nil, &out, &errOut); err != nil {
@@ -74,7 +74,7 @@ func TestServeInTheBackground(t *testing.T) {
 	t.Run("serve --background returns at once, the server answers on its port, and serve.json records its pid, start time and arguments", func(t *testing.T) {
 		home := backgroundHome(t)
 		begin := time.Now()
-		out := startBackground(t, "--port", "0")
+		out := launchBackground(t, "--port", "0")
 		if took := time.Since(begin); took > 5*time.Second {
 			t.Errorf("serve --background took %s, want it to return once the server listens", took)
 		}
@@ -116,11 +116,11 @@ func TestServeInTheBackground(t *testing.T) {
 
 	t.Run("serve --background while one is running says so with its URL and starts nothing", func(t *testing.T) {
 		home := backgroundHome(t)
-		startBackground(t, "--port", "0")
+		launchBackground(t, "--port", "0")
 		before, _ := os.ReadFile(filepath.Join(home, "serve.json"))
 		rec := readServed(t, home)
 
-		out := startBackground(t, "--port", "0")
+		out := launchBackground(t, "--port", "0")
 		url := fmt.Sprintf("http://127.0.0.1:%d", rec.Port)
 		if !strings.Contains(out, "already running") || !strings.Contains(out, url) {
 			t.Errorf("output = %q, want it to say one is already running on %s", out, url)
@@ -132,7 +132,7 @@ func TestServeInTheBackground(t *testing.T) {
 
 	t.Run("serve --stop stops the recorded server and removes serve.json; with none running it says so and exits 0", func(t *testing.T) {
 		home := backgroundHome(t)
-		startBackground(t, "--port", "0")
+		launchBackground(t, "--port", "0")
 		rec := readServed(t, home)
 
 		var out bytes.Buffer

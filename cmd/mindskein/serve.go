@@ -27,23 +27,87 @@ func cmdServe(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	port := fs.Int("port", 8787, "port to listen on, on 127.0.0.1")
+	background := fs.Bool("background", false, "start detached, logging to "+serve.LogFile+" in ~/.mindskein, and return")
+	stop := fs.Bool("stop", false, "stop the server started with --background")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
+	if *background && *stop {
+		return errors.New("--background and --stop cannot be used together")
+	}
+	if *stop {
+		return stopBackground(stdout)
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("%w — fix it before serving, the password is read from it", err)
+	}
+	if *background {
+		return startBackground(stdout, cfg, passThrough(fs, "background"))
 	}
 	ln, err := serve.Listen(*port)
 	if err != nil {
 		return err
 	}
 	announce(stdout, ln.Addr().String(), cfg.Serve.Password != "")
+	serve.NotifyReady(ln.Addr().String())
 	srv := &http.Server{Handler: serveHandler(cfg), ReadHeaderTimeout: 10 * time.Second}
 	return srv.Serve(ln)
+}
+
+// passThrough is every flag set on the command line except skip, as
+// --name=value, so a detached server runs with what the user asked for.
+func passThrough(fs *flag.FlagSet, skip string) []string {
+	args := []string{}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != skip {
+			args = append(args, "--"+f.Name+"="+f.Value.String())
+		}
+	})
+	return args
+}
+
+func startBackground(stdout io.Writer, cfg config.Config, args []string) error {
+	home, err := session.Home()
+	if err != nil {
+		return err
+	}
+	binary, err := binaryPath()
+	if err != nil {
+		return err
+	}
+	b, err := serve.Start(home, binary, args)
+	if errors.Is(err, serve.ErrRunning) {
+		fmt.Fprintf(stdout, "a background server is already running on %s (pid %d)\n", b.URL(), b.PID)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	announce(stdout, strings.TrimPrefix(b.URL(), "http://"), cfg.Serve.Password != "")
+	fmt.Fprintf(stdout, "running in the background as pid %d, logging to %s\nstop it with: mindskein serve --stop\n",
+		b.PID, filepath.Join(home, serve.LogFile))
+	return nil
+}
+
+func stopBackground(stdout io.Writer) error {
+	home, err := session.Home()
+	if err != nil {
+		return err
+	}
+	b, err := serve.Stop(home)
+	if err != nil {
+		return err
+	}
+	if b == nil {
+		fmt.Fprintln(stdout, "no background server is running")
+		return nil
+	}
+	fmt.Fprintf(stdout, "stopped the background server on %s (pid %d)\n", b.URL(), b.PID)
+	return nil
 }
 
 // announce says where the dashboard is, and what it exposes when nothing
