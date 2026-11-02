@@ -314,11 +314,11 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 	subagentsShown := map[string]float64{}
 	uses90 := map[string]int{} // root|kind:name
 	usesInRange := map[string]int{}
+	lastUse := map[string]string{}
 	dailyCost := map[string]map[string]float64{}
 	dailyEvents := map[string]map[string]int{}
 	var big, bigShown []BigResult
-	var listing []int
-	turns, bigTurns := int64(0), 0
+	var sessions []sessionRates
 
 	addSpend := func(m map[string]*Spend, name string, c float64, t Tokens) {
 		s := m[name]
@@ -351,6 +351,7 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 		row := SessionRow{ID: rec.SessionID, Title: f.DisplayTitle(), Repo: rec.Repo, Project: rec.Project, Start: f.Start,
 			ContextMax: f.ContextMax, ContextBig: f.ContextBig}
 		active := false
+		var spent Cost
 		for _, x := range files {
 			ran := map[string]bool{}
 			runCost := map[string]float64{}
@@ -366,6 +367,7 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 					c := costOf(model, t)
 					r.Tokens.add(t, 1)
 					r.Cost.add(c)
+					spent.add(c)
 					addSpend(models, ModelName(model), c.Total(), t)
 					if dailyCost[day] == nil {
 						dailyCost[day] = map[string]float64{}
@@ -419,6 +421,11 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 				}
 			}
 			for day, uses := range x.file.Uses {
+				if rs != nil {
+					for k := range uses {
+						lastUse[rec.Root+"|"+k] = max(lastUse[rec.Root+"|"+k], day)
+					}
+				}
 				if day < cutoff90 {
 					continue
 				}
@@ -476,8 +483,8 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 		}
 		r.Sessions++
 		r.Prompts += row.Prompts
-		turns += row.Turns
-		bigTurns += f.ContextBig
+		sessions = append(sessions, sessionRates{start: f.Start, turns: row.Turns, bigTurns: f.ContextBig,
+			cost: spent, listing: f.ListingChars})
 		for k, n := range f.HookErrors {
 			hookErrors[k] += n
 			if e := rs.hides(FindingHookFailures, k, f.HookFailedAt(k)); e != nil {
@@ -485,9 +492,6 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 			} else {
 				hooksShown[k] += n
 			}
-		}
-		if f.ListingChars > 0 {
-			listing = append(listing, f.ListingChars)
 		}
 		r.TopSessions = append(r.TopSessions, row)
 	}
@@ -516,7 +520,8 @@ func BuildResolved(records []*Record, inv []Inventory, now time.Time, w Window, 
 	r.BigResults = r.BigResults[:min(len(r.BigResults), maxBigResults)]
 	r.Uses = usesOf(usesInRange)
 	r.Inventory = withUses(inv, uses90)
-	r.Findings = findings(r, rs, inv, uses90, hooksShown, bigShown, subagentsShown, listing, turns, bigTurns)
+	rs.clearUsed(inv, lastUse, loc)
+	r.Findings = findings(r, rs, inv, uses90, hooksShown, bigShown, subagentsShown, sessions)
 	r.HistoryDays = historyDays(records, now)
 	if r.HistoryDays < UnusedDays {
 		caveat := fmt.Sprintf("Recorded history covers only %d days, so this counts as unused anything not used in those days. `mindskein usage --backfill` adds transcripts still on disk, but Claude Code deletes older ones per `cleanupPeriodDays`; from here on the store keeps every session, so the full %d days fill in as you work.", r.HistoryDays, UnusedDays)
@@ -550,33 +555,62 @@ func orUnknown(s string) string {
 	return s
 }
 
-// itemUses counts an item's uses in the last UnusedDays. A skill can be run
-// through the Skill tool or typed as a slash command, and both are one skill.
-func itemUses(it Item, uses map[string]int) int {
+// itemUseKeys are the root|kind:name keys an item's uses are counted under.
+// A skill can be run through the Skill tool or typed as a slash command, and
+// both are one skill.
+func itemUseKeys(it Item) []string {
 	pre := it.Root + "|"
 	if it.Kind == "agent" {
-		n := uses[pre+UseAgent+":"+it.Name]
 		if it.Short != it.Name {
-			n += uses[pre+UseAgent+":"+it.Short]
+			return []string{pre + UseAgent + ":" + it.Name, pre + UseAgent + ":" + it.Short}
 		}
-		return n
+		return []string{pre + UseAgent + ":" + it.Name}
 	}
-	return uses[pre+UseSkill+":"+it.Name] + uses[pre+UseCommand+":"+it.Name]
+	return []string{pre + UseSkill + ":" + it.Name, pre + UseCommand + ":" + it.Name}
+}
+
+// itemUses counts an item's uses in the last UnusedDays.
+func itemUses(it Item, uses map[string]int) int {
+	n := 0
+	for _, k := range itemUseKeys(it) {
+		n += uses[k]
+	}
+	return n
+}
+
+// itemLastUse is the last day an item ran, "" when never.
+func itemLastUse(it Item, last map[string]string) string {
+	day := ""
+	for _, k := range itemUseKeys(it) {
+		day = max(day, last[k])
+	}
+	return day
+}
+
+// mcpCall says whether use key k is a call to a tool of server m.
+func mcpCall(m MCPServer, k string) bool {
+	s, ok := strings.CutPrefix(k, m.Root+"|"+UseMCP+":")
+	return ok && (s == m.Name || strings.HasSuffix(s, "_"+m.Name))
 }
 
 func mcpUses(m MCPServer, uses map[string]int) int {
-	pre := m.Root + "|" + UseMCP + ":"
 	n := 0
 	for k, v := range uses {
-		if !strings.HasPrefix(k, pre) {
-			continue
-		}
-		s := strings.TrimPrefix(k, pre)
-		if s == m.Name || strings.HasSuffix(s, "_"+m.Name) {
+		if mcpCall(m, k) {
 			n += v
 		}
 	}
 	return n
+}
+
+func mcpLastUse(m MCPServer, last map[string]string) string {
+	day := ""
+	for k, d := range last {
+		if mcpCall(m, k) {
+			day = max(day, d)
+		}
+	}
+	return day
 }
 
 // topTier says whether a subagent row runs on a model search-shaped work
@@ -588,18 +622,78 @@ func topTier(row string) bool {
 // bigResultChars is the size from which a tool result is worth a finding.
 const bigResultChars = 30_000
 
+// sessionRates is what one session adds to the rate findings.
+type sessionRates struct {
+	start    time.Time
+	turns    int64
+	bigTurns int
+	cost     Cost
+	listing  int
+}
+
+// rates sums the sessions a rate finding is judged over.
+type rates struct {
+	turns    int64
+	bigTurns int
+	cost     Cost
+	listing  []int
+}
+
+// ratesOf sums the sessions started after after, or every session when after
+// is zero.
+func ratesOf(sessions []sessionRates, after time.Time) rates {
+	var out rates
+	for _, s := range sessions {
+		if !after.IsZero() && !s.start.After(after) {
+			continue
+		}
+		out.turns += s.turns
+		out.bigTurns += s.bigTurns
+		out.cost.add(s.cost)
+		if s.listing > 0 {
+			out.listing = append(out.listing, s.listing)
+		}
+	}
+	return out
+}
+
+// contextSize is how a context file's size is judged: lines for a memory
+// index, tokens for an instruction file.
+func contextSize(c ContextFile) int {
+	if c.Kind == "memory-index" {
+		return c.Lines
+	}
+	return c.Chars / 4
+}
+
 // findings judges what the report counted. hookErrors, big and subagents
 // hold only what rs leaves in: they are the occurrences the findings count.
+// A resolved rate finding is judged over the sessions started after its
+// resolve time only.
 func findings(r *Report, rs resolutions, inv []Inventory, uses map[string]int, hookErrors map[string]int,
-	big []BigResult, subagents map[string]float64, listing []int, turns int64, bigTurns int) []Finding {
+	big []BigResult, subagents map[string]float64, sessions []sessionRates) []Finding {
 	var out []Finding
-	total := r.Cost.Total()
-	shown := func(id, key string) bool {
-		if e := rs.hides(id, key, time.Time{}); e != nil {
+	shown := func(id, key string, size int) bool {
+		if e := rs.keeps(id, key, size); e != nil {
 			e.Hidden++
 			return false
 		}
 		return true
+	}
+	all := ratesOf(sessions, time.Time{})
+	rate := func(id string, judge func(rates) (Finding, bool)) {
+		e := rs.whole(id)
+		if e == nil {
+			if f, ok := judge(all); ok {
+				out = append(out, f)
+			}
+			return
+		}
+		if f, ok := judge(ratesOf(sessions, e.ResolvedAt)); ok {
+			out = append(out, f)
+		} else if _, ok := judge(all); ok {
+			e.Hidden++
+		}
 	}
 
 	if n := sumInts(hookErrors); n > 0 {
@@ -624,10 +718,10 @@ func findings(r *Report, rs resolutions, inv []Inventory, uses map[string]int, h
 				continue
 			}
 			if it.Kind == "agent" {
-				if shown(FindingUnusedAgents, it.Name) {
+				if shown(FindingUnusedAgents, it.Name, 0) {
 					unusedAgents = append(unusedAgents, it)
 				}
-			} else if shown(FindingUnusedSkills, it.Name) {
+			} else if shown(FindingUnusedSkills, it.Name, 0) {
 				unusedSkills = append(unusedSkills, it)
 				perRoot[it.Root] += it.ListingTok
 			}
@@ -686,7 +780,7 @@ func findings(r *Report, rs resolutions, inv []Inventory, uses map[string]int, h
 	var mcpItems []FindingItem
 	for _, in := range inv {
 		for _, m := range in.MCP {
-			if mcpUses(m, uses) == 0 && shown(FindingUnusedMCP, m.Name) {
+			if mcpUses(m, uses) == 0 && shown(FindingUnusedMCP, m.Name, 0) {
 				text := m.Name + " (" + m.Root + ": " + strings.Join(m.Scopes, ", ") + ")"
 				unusedMCP = append(unusedMCP, text)
 				mcpItems = append(mcpItems, FindingItem{Key: m.Name, Text: text})
@@ -700,24 +794,32 @@ func findings(r *Report, rs resolutions, inv []Inventory, uses map[string]int, h
 			Evidence: unusedMCP, Items: mcpItems})
 	}
 
-	if turns > 0 {
-		share := float64(bigTurns) / float64(turns)
-		if share > 0.1 && shown(FindingContextBloat, "") {
-			sev := Warning
-			if share > 0.3 {
-				sev = Serious
-			}
-			out = append(out, Finding{ID: FindingContextBloat, Severity: sev,
-				Title:  fmt.Sprintf("%s of turns run above %dK context", pct(share), BigContext/1000),
-				Advice: "Every turn re-reads the whole context. /clear between unrelated tasks and keep the auto-compact window modest."})
+	rate(FindingContextBloat, func(s rates) (Finding, bool) {
+		if s.turns == 0 {
+			return Finding{}, false
 		}
-	}
+		share := float64(s.bigTurns) / float64(s.turns)
+		if share <= 0.1 {
+			return Finding{}, false
+		}
+		sev := Warning
+		if share > 0.3 {
+			sev = Serious
+		}
+		return Finding{ID: FindingContextBloat, Severity: sev,
+			Title:  fmt.Sprintf("%s of turns run above %dK context", pct(share), BigContext/1000),
+			Advice: "Every turn re-reads the whole context. /clear between unrelated tasks and keep the auto-compact window modest."}, true
+	})
 
-	if total > 0 && r.Cost.CacheWrite/total > 0.25 && shown(FindingCacheWrites, "") {
-		out = append(out, Finding{ID: FindingCacheWrites, Severity: Warning,
-			Title:  fmt.Sprintf("Cache writes are %s of spend", pct(r.Cost.CacheWrite/total)),
-			Advice: "New sessions, model or MCP switches, compaction, and breaks longer than the cache lifetime all rewrite the context. Resume within the cache window or start fresh."})
-	}
+	rate(FindingCacheWrites, func(s rates) (Finding, bool) {
+		total := s.cost.Total()
+		if total <= 0 || s.cost.CacheWrite/total <= 0.25 {
+			return Finding{}, false
+		}
+		return Finding{ID: FindingCacheWrites, Severity: Warning,
+			Title:  fmt.Sprintf("Cache writes are %s of spend", pct(s.cost.CacheWrite/total)),
+			Advice: "New sessions, model or MCP switches, compaction, and breaks longer than the cache lifetime all rewrite the context. Resume within the cache window or start fresh."}, true
+	})
 
 	if len(big) > 0 {
 		sort.Slice(big, func(i, j int) bool { return big[i].Bytes > big[j].Bytes })
@@ -759,25 +861,29 @@ func findings(r *Report, rs resolutions, inv []Inventory, uses map[string]int, h
 			Evidence: pricey, Items: priceyItems})
 	}
 
-	if len(listing) > 0 {
-		avg := sumSlice(listing) / len(listing) / 4
-		if avg > 5000 && shown(FindingSkillListing, "") {
-			out = append(out, Finding{ID: FindingSkillListing, Severity: Warning,
-				Title:  fmt.Sprintf("Skill listing averages ≈%d tokens per session", avg),
-				Advice: "Shorten long descriptions and prune unused skills."})
+	rate(FindingSkillListing, func(s rates) (Finding, bool) {
+		if len(s.listing) == 0 {
+			return Finding{}, false
 		}
-	}
+		avg := sumSlice(s.listing) / len(s.listing) / 4
+		if avg <= 5000 {
+			return Finding{}, false
+		}
+		return Finding{ID: FindingSkillListing, Severity: Warning,
+			Title:  fmt.Sprintf("Skill listing averages ≈%d tokens per session", avg),
+			Advice: "Shorten long descriptions and prune unused skills."}, true
+	})
 
 	var heavy, longIdx []string
 	var heavyItems, longIdxItems []FindingItem
 	for _, in := range inv {
 		for _, c := range in.Context {
 			switch {
-			case c.Kind != "memory-index" && c.Chars/4 > 4000 && shown(FindingHeavyInstructions, c.Path):
-				text := fmt.Sprintf("%s (≈%d tok)", c.Path, c.Chars/4)
+			case c.Kind != "memory-index" && contextSize(c) > 4000 && shown(FindingHeavyInstructions, c.Path, contextSize(c)):
+				text := fmt.Sprintf("%s (≈%d tok)", c.Path, contextSize(c))
 				heavy = append(heavy, text)
 				heavyItems = append(heavyItems, FindingItem{Key: c.Path, Text: text})
-			case c.Kind == "memory-index" && c.Lines > 120 && shown(FindingLongMemoryIndex, c.Path):
+			case c.Kind == "memory-index" && c.Lines > 120 && shown(FindingLongMemoryIndex, c.Path, contextSize(c)):
 				text := fmt.Sprintf("%s (%d lines)", c.Path, c.Lines)
 				longIdx = append(longIdx, text)
 				longIdxItems = append(longIdxItems, FindingItem{Key: c.Path, Text: text})
