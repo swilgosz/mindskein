@@ -299,3 +299,13 @@ func TestTitleFromUnicodePromptStaysValid(t *testing.T) {
 		t.Errorf("Title is not valid UTF-8: %q", tr.Title)
 	}
 }
+
+// TestUnclosedReminderIsKept: without a closing tag there is no telling where
+// an injection ends, so dropping everything after the tag could lose the
+// person's own words.
+func TestUnclosedReminderIsKept(t *testing.T) {
+	tr := parse(t, userLine("2026-11-02T13:00:00Z", "typed", `what does <system-reminder> mean here`))
+	if tr.LastMessage != "what does <system-reminder> mean here" {
+		t.Errorf("LastMessage = %q, an unclosed tag must be left as typed", tr.LastMessage)
+	}
+}
