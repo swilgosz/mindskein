@@ -35,6 +35,7 @@ type fakePR struct {
 	state     string
 	body      string
 	head      string
+	oid       string
 	decision  string
 	ci        string
 	committed time.Time
@@ -100,13 +101,17 @@ func (p fakePR) node() map[string]any {
 	} else if p.asked != "" {
 		requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": p.asked}})
 	}
+	oid := p.oid
+	if oid == "" {
+		oid = "oid-" + p.ref()
+	}
 	mine := []any{}
 	if !p.reviewed.IsZero() {
 		mine = append(mine, map[string]any{"state": "COMMENTED", "submittedAt": stamp(p.reviewed)})
 	}
 	return map[string]any{
 		"number": p.number, "title": p.title, "url": p.url(), "isDraft": p.draft, "state": state,
-		"body": p.body, "headRefName": p.head, "additions": p.add, "deletions": p.del,
+		"body": p.body, "headRefName": p.head, "headRefOid": oid, "additions": p.add, "deletions": p.del,
 		"updatedAt": stamp(p.updated), "mergedAt": stamp(p.merged), "closedAt": stamp(p.closed),
 		"author":         map[string]any{"login": p.author},
 		"repository":     map[string]any{"name": name, "owner": map[string]any{"login": owner}},
