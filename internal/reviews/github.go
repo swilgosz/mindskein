@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -311,11 +312,20 @@ func parsePullURL(u string) (watch, bool) {
 	return watch{owner: parts[0], repo: parts[1], number: n}, true
 }
 
-// details looks up each watched pull request, all in one query.
+// details looks up each watched pull request, pageSize at a time: a query
+// holding more of them runs into GitHub's time limit, as a search page does.
 func (g github) details(ctx context.Context, watches []watch) (map[string]pullRequest, error) {
-	if len(watches) == 0 {
-		return nil, nil
+	found := map[string]pullRequest{}
+	for batch := range slices.Chunk(watches, pageSize) {
+		if err := g.lookUp(ctx, batch, found); err != nil {
+			return nil, err
+		}
 	}
+	return found, nil
+}
+
+// lookUp adds the pull requests of one batch of watches to found, in one query.
+func (g github) lookUp(ctx context.Context, watches []watch, found map[string]pullRequest) error {
 	var params, body strings.Builder
 	var vars []string
 	for i, w := range watches {
@@ -334,13 +344,12 @@ func (g github) details(ctx context.Context, watches []watch) (map[string]pullRe
 		PullRequest *pullRequest `json:"pullRequest"`
 	}
 	if err := g.graphql(ctx, query, &data, vars...); err != nil {
-		return nil, err
+		return err
 	}
-	found := map[string]pullRequest{}
 	for i, w := range watches {
 		if r := data["p"+strconv.Itoa(i)]; r != nil && r.PullRequest != nil {
 			found[w.ref()] = *r.PullRequest
 		}
 	}
-	return found, nil
+	return nil
 }

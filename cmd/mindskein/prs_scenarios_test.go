@@ -511,6 +511,32 @@ func TestPrs(t *testing.T) {
 		}
 	})
 
+	t.Run("many watched PRs are looked up in batches GitHub answers in time, and all of them are listed", func(t *testing.T) {
+		f := &fakeGitHub{}
+		for i := 1; i <= 120; i++ {
+			pr := fakePR{repo: "acme/api", number: i, author: "ann", updated: ago(time.Hour)}
+			f.notified = append(f.notified, fakeNotification{"mention", pr})
+			f.pulls = append(f.pulls, pr)
+		}
+		useGitHub(t, f)
+		if got := listed(prsJSON(t)); len(got) != 120 {
+			t.Errorf("listed %d watched PRs, want 120", len(got))
+		}
+		var batches []int
+		for _, call := range f.calls {
+			v := vars(call)
+			if _, search := v["q"]; v["query"] != "" && !search {
+				n := 0
+				for ; v["o"+strconv.Itoa(n)] != ""; n++ {
+				}
+				batches = append(batches, n)
+			}
+		}
+		if fmt.Sprint(batches) != "[50 50 20]" {
+			t.Errorf("looked up watched PRs in batches of %v, want [50 50 20]", batches)
+		}
+	})
+
 	t.Run("Done this week holds your PRs merged or closed and PRs you reviewed in the last 7 days, and nothing older", func(t *testing.T) {
 		week := 7 * 24 * time.Hour
 		useGitHub(t, &fakeGitHub{
