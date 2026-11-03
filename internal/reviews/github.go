@@ -83,14 +83,15 @@ const (
 	openFields = baseFields + `
     reviewDecision headRefName
     commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
-    comments(last: 1) { nodes { author { login } createdAt } }
-    reviews(last: 1) { nodes { author { login } submittedAt } }`
+    comments(last: 5) { nodes { author { login __typename } createdAt } }
+    reviews(last: 5) { nodes { author { login __typename } submittedAt } }`
 	mineFields     = openFields + "\n    body"
 	reviewedFields = baseFields + "\n    mine: reviews(author: $me, last: 5) { nodes { state submittedAt } }"
 )
 
 type actor struct {
 	Login string `json:"login"`
+	Kind  string `json:"__typename"`
 }
 
 type activity struct {

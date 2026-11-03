@@ -268,10 +268,14 @@ func (p pullRequest) ciFailing() bool {
 // hasNewComments says whether the latest comment or review is someone
 // else's and came after the last commit. When it is someone else's, every
 // comment of yours is older by definition, so the commit is the only other
-// moment to compare with.
+// moment to compare with. Bots wait on no one, so their comments are skipped;
+// the last few are read so that one bot comment does not hide a person's.
 func (p pullRequest) hasNewComments(login string) bool {
 	var latest activity
 	for _, a := range append(slices.Clone(p.Comments.Nodes), p.Reviews.Nodes...) {
+		if a.Author != nil && a.Author.Kind == "Bot" {
+			continue
+		}
 		if a.at().After(latest.at()) {
 			latest = a
 		}

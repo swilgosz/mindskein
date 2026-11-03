@@ -18,8 +18,9 @@ import (
 
 // act is one comment or review on a fake pull request.
 type act struct {
-	by string
-	at time.Time
+	by  string
+	at  time.Time
+	bot bool
 }
 
 // fakePR is a pull request as the fake GitHub holds it.
@@ -38,6 +39,7 @@ type fakePR struct {
 	ci        string
 	committed time.Time
 	comment   *act
+	botNote   *act
 	review    *act
 	closed    time.Time
 	merged    time.Time
@@ -55,11 +57,19 @@ func stamp(t time.Time) any {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func activities(a *act, field string) map[string]any {
-	if a == nil {
-		return map[string]any{"nodes": []any{}}
+func activities(field string, acts ...*act) map[string]any {
+	nodes := []any{}
+	for _, a := range acts {
+		if a == nil {
+			continue
+		}
+		kind := "User"
+		if a.bot {
+			kind = "Bot"
+		}
+		nodes = append(nodes, map[string]any{"author": map[string]any{"login": a.by, "__typename": kind}, field: stamp(a.at)})
 	}
-	return map[string]any{"nodes": []any{map[string]any{"author": map[string]any{"login": a.by}, field: stamp(a.at)}}}
+	return map[string]any{"nodes": nodes}
 }
 
 // node is the pull request as GitHub's GraphQL API returns it.
@@ -94,8 +104,8 @@ func (p fakePR) node() map[string]any {
 		"reviewDecision": decision,
 		"commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{
 			"committedDate": stamp(committed), "statusCheckRollup": rollup}}}},
-		"comments": activities(p.comment, "createdAt"),
-		"reviews":  activities(p.review, "submittedAt"),
+		"comments": activities("createdAt", p.comment, p.botNote),
+		"reviews":  activities("submittedAt", p.review),
 		"mine":     map[string]any{"nodes": mine},
 	}
 }
@@ -429,6 +439,19 @@ func TestPrs(t *testing.T) {
 		}})
 		if got := listed(prsJSON(t)); len(got) != 0 {
 			t.Errorf("listed %v, want nothing: you answered, or pushed, after the last comment", got)
+		}
+	})
+
+	t.Run("a comment from a bot is not new; a person's comment before it still is", func(t *testing.T) {
+		useGitHub(t, &fakeGitHub{mine: []fakePR{
+			{repo: "me/tool", number: 1, author: "me", updated: ago(time.Hour), ci: "SUCCESS", decision: "REVIEW_REQUIRED",
+				botNote: &act{by: "github-actions", at: ago(time.Hour), bot: true}, committed: ago(2 * time.Hour)},
+			{repo: "me/tool", number: 2, author: "me", updated: ago(time.Hour), ci: "SUCCESS",
+				comment: &act{by: "ann", at: ago(90 * time.Minute)}, botNote: &act{by: "github-actions", at: ago(time.Hour), bot: true}, committed: ago(2 * time.Hour)},
+		}})
+		want := map[string][2]string{"me/tool#2": {"yours", "new comments: reply"}}
+		if got := listed(prsJSON(t)); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("listed %v, want %v: a bot's comment waits on no one", got, want)
 		}
 	})
 
