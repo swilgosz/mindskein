@@ -231,6 +231,14 @@ details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
 .handoff-head .when { color: var(--muted); font-size: 12px; font-family: var(--mono); white-space: nowrap; }
 .handoff .message { margin: 4px 0 0; color: var(--text-2); overflow-wrap: anywhere; }
 
+.rv-counts { display: flex; flex-direction: column; gap: 4px; }
+.rv-count { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.rv-count .label { font-weight: 600; min-width: 90px; }
+.rv-top { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--grid); }
+.rv-pick { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; min-width: 0; }
+.rv-pick .arrow { color: var(--muted); }
+.rv-pick .why { color: var(--text-2); overflow-wrap: anywhere; }
+
 /* ---------- key/value ---------- */
 
 .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
