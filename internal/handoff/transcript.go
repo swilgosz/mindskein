@@ -222,7 +222,7 @@ func textOf(raw json.RawMessage) string {
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return strings.TrimSpace(s)
+		return strings.TrimSpace(stripReminders(s))
 	}
 	var blocks []block
 	if err := json.Unmarshal(raw, &blocks); err != nil {
@@ -230,11 +230,44 @@ func textOf(raw json.RawMessage) string {
 	}
 	var parts []string
 	for _, b := range blocks {
-		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-			parts = append(parts, strings.TrimSpace(b.Text))
+		if b.Type != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(stripReminders(b.Text)); text != "" {
+			parts = append(parts, text)
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+const (
+	reminderOpen  = "<system-reminder>"
+	reminderClose = "</system-reminder>"
+)
+
+// stripReminders removes the <system-reminder> blocks Claude clients inject
+// into a prompt, so a prompt that carried nothing else reads as empty. An
+// unclosed tag is left in place: without its end there is no telling where the
+// injection stops and the person's text resumes.
+func stripReminders(s string) string {
+	if !strings.Contains(s, reminderOpen) {
+		return s
+	}
+	var b strings.Builder
+	for {
+		start := strings.Index(s, reminderOpen)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start:], reminderClose)
+		if end < 0 {
+			break
+		}
+		b.WriteString(s[:start])
+		s = s[start+end+len(reminderClose):]
+	}
+	b.WriteString(s)
+	return b.String()
 }
 
 func toolOf(raw json.RawMessage) string {
