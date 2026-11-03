@@ -285,6 +285,7 @@ func TestPrsDone(t *testing.T) {
 		if got := listed(prsJSON(t))["acme/api#12"]; got != [2]string{"done", "marked done"} {
 			t.Errorf("not updated since, acme/api#12 is %v, want done", got)
 		}
+		ageMarks(t, home, time.Minute)
 		f.waiting[0].updated = time.Now()
 		ageCache(t, home, time.Hour)
 		if got := listed(prsJSON(t))["acme/api#12"]; got[0] != "waiting" {

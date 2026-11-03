@@ -20,6 +20,7 @@ import (
 	"github.com/swilgosz/mindskein/internal/hook"
 	"github.com/swilgosz/mindskein/internal/install"
 	"github.com/swilgosz/mindskein/internal/priorities"
+	"github.com/swilgosz/mindskein/internal/reviews"
 	"github.com/swilgosz/mindskein/internal/session"
 	"github.com/swilgosz/mindskein/internal/text"
 	insight "github.com/swilgosz/mindskein/internal/usage"
@@ -82,13 +83,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"priorities", "print the !1/!2 lines in your priorities file", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
-		{"prs", "list the pull requests waiting on you, from every org", func(args []string, _ io.Reader) error {
+		{"prs", "list the pull requests waiting on you, from every org; decline or done one", func(args []string, _ io.Reader) error {
 			return cmdPrs(args, stdout, stderr)
 		}},
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
 			return cmdInit(args, stdout, stderr)
 		}},
-		{"prune", "delete session records, handoffs and usage records past their retention horizons", func(args []string, _ io.Reader) error {
+		{"prune", "delete session records, handoffs, usage records and PR marks past their retention horizons", func(args []string, _ io.Reader) error {
 			return cmdPrune(args, stdout, stderr)
 		}},
 		{"usage", "report token spend and what to improve in your setup", func(args []string, _ io.Reader) error {
@@ -641,6 +642,18 @@ func prune(cfg config.Config, now time.Time, dryRun bool) ([]*session.PruneResul
 			firstErr = err
 		}
 	} else if res, err := store.Prune(now, time.Duration(cfg.Retention.Usage), dryRun); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else {
+		results = append(results, res)
+	}
+
+	if store, err := reviews.DefaultMarks(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+	} else if res, err := store.Prune(now, dryRun); err != nil {
 		if firstErr == nil {
 			firstErr = err
 		}

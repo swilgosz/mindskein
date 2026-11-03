@@ -82,7 +82,7 @@ const (
     author { login }
     repository { name owner { login } }`
 	openFields = baseFields + `
-    reviewDecision headRefName
+    reviewDecision headRefName headRefOid
     commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
     comments(last: 5) { nodes { author { login __typename } createdAt } }
     reviews(last: 5) { nodes { author { login __typename } submittedAt } }
@@ -132,6 +132,7 @@ type pullRequest struct {
 	State       string     `json:"state"`
 	Body        string     `json:"body"`
 	HeadRefName string     `json:"headRefName"`
+	HeadRefOid  string     `json:"headRefOid"`
 	Additions   int        `json:"additions"`
 	Deletions   int        `json:"deletions"`
 	UpdatedAt   time.Time  `json:"updatedAt"`

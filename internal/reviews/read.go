@@ -43,7 +43,7 @@ type Report struct {
 
 // cacheVersion changes whenever a cached queue lacks something a newer
 // version reads from it; an older one is still a fallback, never fresh.
-const cacheVersion = 2
+const cacheVersion = 3
 
 type cacheDoc struct {
 	Version int `json:"version"`
@@ -101,15 +101,21 @@ func saveCache(path string, doc cacheDoc) error {
 	if path == "" {
 		return nil
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", dir, err)
-	}
 	data, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-prs-*")
+	return writeAtomic(path, data, ".tmp-prs-*")
+}
+
+// writeAtomic replaces path with data through a temporary file named after
+// pattern, so a reader never sees half of it.
+func writeAtomic(path string, data []byte, pattern string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return err
 	}

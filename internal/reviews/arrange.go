@@ -30,7 +30,7 @@ const SecurityMaxLines = 200
 // Arrange applies the user's rules to a fetched queue: it drops what a skip
 // rule matches, puts each pull request in its Life Space and ranks the open
 // ones. Inside a group, a lower rank comes first and equal ranks oldest
-// first; Done this week stays newest first.
+// first; Declined and Done this week stay newest first.
 func Arrange(q Queue, rules config.Reviews, now time.Time) Queue {
 	if len(rules.Spaces) > 0 {
 		q.Spaces = make([]string, 0, len(rules.Spaces)+1)
@@ -49,12 +49,12 @@ func Arrange(q Queue, rules config.Reviews, now time.Time) Queue {
 			}
 			p.Space = spaceOf(p, rules.Spaces)
 			p.Rank = 0
-			if g.ID != GroupDone {
+			if openGroup(g.ID) {
 				p.Rank = rank(p, rules.Team, now)
 			}
 			prs = append(prs, p)
 		}
-		if g.ID != GroupDone {
+		if openGroup(g.ID) {
 			slices.SortStableFunc(prs, func(a, b PR) int {
 				if c := cmp.Compare(a.Rank, b.Rank); c != 0 {
 					return c
