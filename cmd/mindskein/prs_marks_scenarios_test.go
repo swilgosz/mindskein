@@ -333,7 +333,7 @@ func TestPrunePRMarks(t *testing.T) {
 		}
 	})
 
-	t.Run("prune removes a done mark older than a week once the last fetch no longer lists the PR or shows it changed, and keeps one listed unchanged", func(t *testing.T) {
+	t.Run("prune removes a done mark older than a week once the last fetch shows the PR changed, merged or closed, and keeps one it lists unchanged or does not list", func(t *testing.T) {
 		f := everyGroup()
 		f.waiting[0].oid = "a1"
 		f.pulls = append(f.pulls, fakePR{repo: "acme/web", number: 9, author: "ann", updated: ago(time.Hour)})
@@ -341,6 +341,7 @@ func TestPrunePRMarks(t *testing.T) {
 		mustRun(t, "prs", "done", "me/tool#3")
 		mustRun(t, "prs", "done", "acme/web#9")
 		mustRun(t, "prs", "done", "acme/api#12")
+		mustRun(t, "prs", "done", "initech/cli#7")
 		ageMarks(t, home, 8*24*time.Hour)
 		f.waiting[0].oid = "b2"
 		ageCache(t, home, time.Hour)
@@ -348,8 +349,27 @@ func TestPrunePRMarks(t *testing.T) {
 		if err := cmdPrune(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 			t.Fatal(err)
 		}
-		if got := markedRefs(t, home); len(got) != 1 || got[0] != "me/tool#3" {
-			t.Errorf("marks = %v, want only me/tool#3", got)
+		if got := markedRefs(t, home); strings.Join(got, " ") != "me/tool#3 acme/web#9" {
+			t.Errorf("marks = %v, want me/tool#3 and acme/web#9", got)
+		}
+	})
+
+	t.Run("a done PR the last fetch does not list stays out once prune has run, until it changes", func(t *testing.T) {
+		f := everyGroup()
+		f.mine[0].ci = "FAILURE"
+		home := useGitHub(t, f)
+		mustRun(t, "prs", "done", "me/tool#3")
+		ageMarks(t, home, 8*24*time.Hour)
+		f.mine[0].ci = "SUCCESS"
+		ageCache(t, home, time.Hour)
+		mustRun(t, "prs")
+		if err := cmdPrune(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		f.mine[0].ci = "FAILURE"
+		ageCache(t, home, time.Hour)
+		if got, ok := listed(prsJSON(t))["me/tool#3"]; ok {
+			t.Errorf("unchanged, me/tool#3 is listed in %v, want it out", got)
 		}
 	})
 

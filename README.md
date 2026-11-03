@@ -304,7 +304,7 @@ mindskein prs done https://github.com/acme/web/pull/88
 
 Marking a PR again replaces its earlier mark. `prune` drops the marks that no
 longer hide anything once they are a week old: every decline, and a done mark
-the last fetched list no longer has open, or shows changed.
+whose PR the last fetched list shows changed, merged or closed.
 
 Inside each group, PRs are ranked, first to last:
 

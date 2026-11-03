@@ -297,8 +297,9 @@ func (s *Marks) Put(m Mark) error {
 
 // Prune removes the marks that keep nothing out any more, once they are
 // DeclineWindow old: every decline, and a done mark when the last queue
-// fetched after it was made no longer lists the pull request as open or
-// shows it changed. A done mark the last fetch cannot judge is kept.
+// fetched after it was made shows the pull request changed, merged or
+// closed. A done mark the last fetch cannot judge, or does not list, is
+// kept: the pull request may still be open and show again unchanged.
 func (s *Marks) Prune(now time.Time, dryRun bool) (*session.PruneResult, error) {
 	res := &session.PruneResult{Kind: "PR mark", Horizon: DeclineWindow, DryRun: dryRun}
 	all, err := s.Load()
@@ -306,21 +307,19 @@ func (s *Marks) Prune(now time.Time, dryRun bool) (*session.PruneResult, error) 
 		return nil, err
 	}
 	cached, haveCache := loadCache(s.CachePath)
-	open := map[string]Group{}
-	for _, g := range cached.Queue.Groups {
-		if openGroup(g.ID) {
-			open[g.ID] = g
-		}
-	}
-	lookUp := func(ref string) (PR, string, bool) {
-		for id, g := range open {
+	ended := func(m Mark) bool {
+		for _, g := range cached.Queue.Groups {
 			for _, p := range g.PRs {
-				if strings.EqualFold(p.Ref, ref) {
-					return p, id, true
+				if !strings.EqualFold(p.Ref, m.Ref) {
+					continue
 				}
+				if openGroup(g.ID) {
+					return m.changed(p, g.ID)
+				}
+				return p.Reason == ReasonMerged || p.Reason == ReasonClosed
 			}
 		}
-		return PR{}, "", false
+		return false
 	}
 
 	kept := make([]Mark, 0, len(all))
@@ -330,8 +329,7 @@ func (s *Marks) Prune(now time.Time, dryRun bool) (*session.PruneResult, error) 
 			switch m.Kind {
 			case MarkDone:
 				if haveCache && cached.Queue.FetchedAt.After(m.MarkedAt) {
-					p, group, ok := lookUp(m.Ref)
-					gone = !ok || m.changed(p, group)
+					gone = ended(m)
 				}
 			default:
 				gone = true
