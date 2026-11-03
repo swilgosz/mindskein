@@ -109,8 +109,10 @@ func (r briefReviewsJSON) countsLines() []string {
 // squash collapses the column padding of a printed line.
 func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
 
+// reviewsSection is the REVIEWS block's body. Its heading is matched at the
+// start of a line: a test's temporary path can hold the word too.
 func reviewsSection(out string) string {
-	return section(out, reviewsHeading)
+	return strings.TrimRight(section(out, "\n"+reviewsHeading), "\n")
 }
 
 func TestBriefReviews(t *testing.T) {
@@ -118,7 +120,7 @@ func TestBriefReviews(t *testing.T) {
 		home := useGitHub(t, morningQueue())
 		reviewsConfig(t, home, briefSpaces)
 		out := runBrief(t)
-		left, rev := strings.Index(out, handoff.Heading), strings.Index(out, reviewsHeading)
+		left, rev := strings.Index(out, "\n"+handoff.Heading), strings.Index(out, "\n"+reviewsHeading)
 		if left < 0 || rev < left {
 			t.Fatalf("brief printed\n%s\nwant REVIEWS after WHERE WE LEFT OFF", out)
 		}
@@ -219,6 +221,7 @@ func TestBriefReviews(t *testing.T) {
 	t.Run("the dashboard's /api/brief carries the same REVIEWS block as brief --json", func(t *testing.T) {
 		home := useGitHub(t, morningQueue())
 		reviewsConfig(t, home, briefSpaces)
+		mustRun(t, "prs")
 		want := briefReviews(t)
 		cfg, err := loadConfig()
 		if err != nil {
@@ -240,7 +243,7 @@ func TestBriefReviewsFailSoft(t *testing.T) {
 	// others is the brief without its REVIEWS block.
 	others := func(t *testing.T, out string) string {
 		t.Helper()
-		i := strings.Index(out, reviewsHeading)
+		i := strings.Index(out, "\n"+reviewsHeading)
 		if i < 0 {
 			t.Fatalf("brief printed no REVIEWS:\n%s", out)
 		}

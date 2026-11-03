@@ -74,7 +74,7 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	commands := []command{
-		{"brief", "print priorities, live sessions and last handoffs", func(args []string, _ io.Reader) error {
+		{"brief", "print priorities, live sessions, last handoffs and reviews", func(args []string, _ io.Reader) error {
 			return cmdBrief(args, stdout, stderr)
 		}},
 		{"status", "print live sessions only (mid-day check)", func(args []string, _ io.Reader) error {
@@ -153,11 +153,12 @@ func usage(w io.Writer, commands []command) {
 }
 
 // cmdBrief prints the whole morning question in one page: what matters, what
-// is running, and where each thread was left.
+// is running, where each thread was left, and which pull requests wait on you.
 //
-// The three sections come from three independent sources, so each is composed
-// as a section rather than rendered inline: an unreadable priorities file or
-// an unreachable store costs one line of explanation, not the other two blocks.
+// The four sections come from independent sources, so each is composed as a
+// section rather than rendered inline: an unreadable priorities file, an
+// unreachable store or GitHub out of reach costs one line of explanation, not
+// the other blocks.
 func cmdBrief(args []string, stdout, stderr io.Writer) error {
 	cfg, cfgErr := loadConfig()
 	hideAfter := cfg.Status.HideAfter
@@ -177,7 +178,7 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
 	}
 
-	b := buildBrief(cfg, *all, hideAfter.Duration(), time.Now().UTC())
+	b := buildBrief(cfg, *all, hideAfter.Duration(), time.Now().UTC(), stderr)
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -202,20 +203,29 @@ func cmdBrief(args []string, stdout, stderr io.Writer) error {
 			}
 			return handoff.Print(w, b.Handoffs.View)
 		}},
+		brief.Section{Heading: reviews.BriefHeading, Render: func(w io.Writer) error {
+			return reviews.PrintSummary(w, b.Reviews.Summary)
+		}},
 	)
 }
 
 // briefReport is the brief decided but not printed. The terminal and the JSON
 // both print it, so they cannot disagree about a row.
 //
-// The three blocks come from three independent sources, so each carries its
-// own error: an unreadable priorities file or an unreachable store costs one
-// line of explanation, not the other two blocks.
+// The blocks come from independent sources, so each carries its own error:
+// an unreadable priorities file, an unreachable store or GitHub out of reach
+// costs one line of explanation, not the other blocks.
 type briefReport struct {
 	GeneratedAt time.Time       `json:"generated_at"`
 	Priorities  prioritiesBlock `json:"priorities"`
 	Sessions    sessionsBlock   `json:"sessions"`
 	Handoffs    handoffsBlock   `json:"handoffs"`
+	Reviews     reviewsBlock    `json:"reviews"`
+}
+
+type reviewsBlock struct {
+	Heading string `json:"heading"`
+	reviews.Summary
 }
 
 type prioritiesBlock struct {
@@ -236,13 +246,17 @@ type handoffsBlock struct {
 	handoff.View
 }
 
-func buildBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.Time) briefReport {
+// buildBrief decides every block. Warnings that cost no block, such as a PR
+// cache that could not be saved, go to warn.
+func buildBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.Time, warn io.Writer) briefReport {
 	b := briefReport{
 		GeneratedAt: now,
 		Priorities:  prioritiesBlock{Heading: priorities.Heading},
 		Sessions:    sessionsBlock{Heading: session.Heading},
 		Handoffs:    handoffsBlock{Heading: handoff.Heading},
+		Reviews:     reviewsBlock{Heading: reviews.BriefHeading},
 	}
+	b.Reviews.Summary = reviews.Summarize(readQueue(cfg, now, warn), now)
 	if v, err := priorityView(cfg, all); err != nil {
 		b.Priorities.Error = err.Error()
 	} else {
