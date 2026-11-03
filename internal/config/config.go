@@ -53,6 +53,24 @@ type Config struct {
 	Priorities Priorities `toml:"priorities"`
 	Retention  Retention  `toml:"retention"`
 	Serve      Serve      `toml:"serve"`
+	Reviews    Reviews    `toml:"reviews"`
+}
+
+// DefaultCacheAge is how long a fetched PR queue is reused before prs asks
+// GitHub again: long enough that a brief and a dashboard opened together cost
+// one round of calls, short enough that a review requested this morning shows
+// by the next coffee.
+const DefaultCacheAge = 10 * time.Minute
+
+// Reviews configures the pull request queue.
+type Reviews struct {
+	// CacheAge is how old the last fetched queue may be and still be shown
+	// without asking GitHub. Zero refreshes on every read.
+	CacheAge Duration `toml:"cache_age"`
+
+	// AgentMarker is the text, found in a draft's body or head branch, that
+	// says an agent opened it. Empty counts every draft of yours.
+	AgentMarker string `toml:"agent_marker"`
 }
 
 // Serve configures the web view.
@@ -132,6 +150,7 @@ func Defaults() Config {
 			Handoffs: Duration(DefaultPruneHandoffs),
 			Usage:    Duration(DefaultPruneUsage),
 		},
+		Reviews: Reviews{CacheAge: Duration(DefaultCacheAge)},
 	}
 }
 
@@ -173,6 +192,10 @@ func Load(path string) (Config, error) {
 	if meta.IsDefined("retention", "usage") {
 		cfg.Retention.Usage = file.Retention.Usage
 	}
+	if meta.IsDefined("reviews", "cache_age") {
+		cfg.Reviews.CacheAge = file.Reviews.CacheAge
+	}
+	cfg.Reviews.AgentMarker = file.Reviews.AgentMarker
 	cfg.Priorities = file.Priorities
 	cfg.Serve = file.Serve
 	if p := cfg.Priorities.Path(); p != "" && !filepath.IsAbs(p) {
