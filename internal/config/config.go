@@ -71,6 +71,81 @@ type Reviews struct {
 	// AgentMarker is the text, found in a draft's body or head branch, that
 	// says an agent opened it. Empty counts every draft of yours.
 	AgentMarker string `toml:"agent_marker"`
+
+	// Team is whose fresh pull requests rank above the rest.
+	Team Team `toml:"team"`
+
+	// Spaces sort pull requests into Life Spaces, in this order. A pull
+	// request goes to the first that matches, or to OtherSpace. None lists
+	// every pull request together.
+	Spaces []Space `toml:"spaces"`
+
+	// Skip drops the pull requests a rule matches before they are ranked.
+	Skip []SkipRule `toml:"skip"`
+}
+
+// OtherSpace holds the pull requests no configured space matches.
+const OtherSpace = "Other"
+
+// Team names the people and repositories you work with. Repos are owner or
+// owner/repo patterns; authors are login patterns. A * in a pattern stands
+// for any run of characters, and case is ignored.
+type Team struct {
+	Authors []string `toml:"authors"`
+	Repos   []string `toml:"repos"`
+}
+
+// Space is one Life Space: a name and the owner or owner/repo patterns of
+// the pull requests that belong to it.
+type Space struct {
+	Name  string   `toml:"name"`
+	Repos []string `toml:"repos"`
+}
+
+// SkipRule drops a pull request whose repository, author and title match
+// every pattern the rule sets. UnlessReviewRequested keeps one whose review
+// is requested from you directly.
+type SkipRule struct {
+	Repo                  string `toml:"repo"`
+	Author                string `toml:"author"`
+	Title                 string `toml:"title"`
+	UnlessReviewRequested bool   `toml:"unless_review_requested"`
+}
+
+// validReviews keeps the spaces and skip rules that can be applied and says
+// what is wrong with the others.
+func validReviews(r Reviews) (Reviews, []string) {
+	var problems []string
+	var spaces []Space
+	names := map[string]bool{}
+	for i, s := range r.Spaces {
+		at := fmt.Sprintf("reviews.spaces[%d]", i+1)
+		name := strings.TrimSpace(s.Name)
+		switch {
+		case name == "":
+			problems = append(problems, at+": no name")
+		case len(s.Repos) == 0:
+			problems = append(problems, fmt.Sprintf("%s %s: no repos", at, name))
+		case strings.EqualFold(name, OtherSpace):
+			problems = append(problems, fmt.Sprintf("%s %s: reserved for pull requests no space matches", at, name))
+		case names[strings.ToLower(name)]:
+			problems = append(problems, fmt.Sprintf("%s %s: named twice", at, name))
+		default:
+			names[strings.ToLower(name)] = true
+			s.Name = name
+			spaces = append(spaces, s)
+		}
+	}
+	var skip []SkipRule
+	for i, rule := range r.Skip {
+		if rule.Repo == "" && rule.Author == "" && rule.Title == "" {
+			problems = append(problems, fmt.Sprintf("reviews.skip[%d]: no repo, author or title", i+1))
+			continue
+		}
+		skip = append(skip, rule)
+	}
+	r.Spaces, r.Skip = spaces, skip
+	return r, problems
 }
 
 // Serve configures the web view.
@@ -196,6 +271,9 @@ func Load(path string) (Config, error) {
 		cfg.Reviews.CacheAge = file.Reviews.CacheAge
 	}
 	cfg.Reviews.AgentMarker = file.Reviews.AgentMarker
+	cfg.Reviews.Team = file.Reviews.Team
+	reviews, problems := validReviews(file.Reviews)
+	cfg.Reviews.Spaces, cfg.Reviews.Skip = reviews.Spaces, reviews.Skip
 	cfg.Priorities = file.Priorities
 	cfg.Serve = file.Serve
 	if p := cfg.Priorities.Path(); p != "" && !filepath.IsAbs(p) {
@@ -218,6 +296,9 @@ func Load(path string) (Config, error) {
 			keys = append(keys, key.String())
 		}
 		return cfg, fmt.Errorf("unknown setting in %s: %s", path, strings.Join(keys, ", "))
+	}
+	if len(problems) > 0 {
+		return cfg, fmt.Errorf("%s: %s", path, strings.Join(problems, "; "))
 	}
 	return cfg, nil
 }
