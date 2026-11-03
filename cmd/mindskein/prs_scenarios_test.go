@@ -44,6 +44,9 @@ type fakePR struct {
 	closed    time.Time
 	merged    time.Time
 	reviewed  time.Time
+	// asked is whom its review is requested from: a login, or a team
+	// written @org/team. Waiting PRs default to the signed-in user.
+	asked string
 }
 
 func (p fakePR) ref() string { return fmt.Sprintf("%s#%d", p.repo, p.number) }
@@ -91,6 +94,12 @@ func (p fakePR) node() map[string]any {
 	if committed.IsZero() {
 		committed = p.updated
 	}
+	requests := []any{}
+	if team, ok := strings.CutPrefix(p.asked, "@"); ok {
+		requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "slug": team}})
+	} else if p.asked != "" {
+		requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": p.asked}})
+	}
 	mine := []any{}
 	if !p.reviewed.IsZero() {
 		mine = append(mine, map[string]any{"state": "COMMENTED", "submittedAt": stamp(p.reviewed)})
@@ -104,9 +113,10 @@ func (p fakePR) node() map[string]any {
 		"reviewDecision": decision,
 		"commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{
 			"committedDate": stamp(committed), "statusCheckRollup": rollup}}}},
-		"comments": activities("createdAt", p.comment, p.botNote),
-		"reviews":  activities("submittedAt", p.review),
-		"mine":     map[string]any{"nodes": mine},
+		"comments":       activities("createdAt", p.comment, p.botNote),
+		"reviews":        activities("submittedAt", p.review),
+		"mine":           map[string]any{"nodes": mine},
+		"reviewRequests": map[string]any{"nodes": requests},
 	}
 }
 
@@ -229,6 +239,9 @@ func (f *fakeGitHub) graphql(v map[string]string) ([]byte, error) {
 	}
 	nodes := []any{}
 	for _, p := range found[start:end] {
+		if q == "is:pr is:open review-requested:@me" && p.asked == "" {
+			p.asked = f.login
+		}
 		nodes = append(nodes, p.node())
 	}
 	return json.Marshal(map[string]any{"data": map[string]any{"search": map[string]any{

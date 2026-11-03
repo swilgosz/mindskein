@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,6 +57,76 @@ func TestReviewsConfiguration(t *testing.T) {
 		}
 		if cfg.Reviews.AgentMarker != "agent/" {
 			t.Errorf("AgentMarker = %q, want the key that was right still applied", cfg.Reviews.AgentMarker)
+		}
+	})
+
+	t.Run("reads team authors and repos, ordered spaces and skip rules from [reviews]", func(t *testing.T) {
+		cfg, err := Load(configFile(t, `[reviews]
+[reviews.team]
+authors = ["ann", "bob"]
+repos = ["acme/web"]
+
+[[reviews.spaces]]
+name = "Work"
+repos = ["acme", "globex/web"]
+
+[[reviews.spaces]]
+name = "Business"
+repos = ["me"]
+
+[[reviews.skip]]
+repo = "acme/legacy-*"
+
+[[reviews.skip]]
+title = "WIP*"
+author = "zed"
+unless_review_requested = true
+`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := cfg.Reviews
+		if fmt.Sprint(r.Team.Authors, r.Team.Repos) != "[ann bob] [acme/web]" {
+			t.Errorf("Team = %+v", r.Team)
+		}
+		want := []Space{{Name: "Work", Repos: []string{"acme", "globex/web"}}, {Name: "Business", Repos: []string{"me"}}}
+		if fmt.Sprint(r.Spaces) != fmt.Sprint(want) {
+			t.Errorf("Spaces = %+v, want %+v in config order", r.Spaces, want)
+		}
+		skip := []SkipRule{{Repo: "acme/legacy-*"}, {Title: "WIP*", Author: "zed", UnlessReviewRequested: true}}
+		if fmt.Sprint(r.Skip) != fmt.Sprint(skip) {
+			t.Errorf("Skip = %+v, want %+v", r.Skip, skip)
+		}
+	})
+
+	t.Run("every [reviews] key is optional: no team, no spaces, no skip rules", func(t *testing.T) {
+		cfg, err := Load(configFile(t, "[reviews]\ncache_age = \"5m\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := cfg.Reviews
+		if len(r.Team.Authors)+len(r.Team.Repos)+len(r.Spaces)+len(r.Skip) != 0 {
+			t.Errorf("Reviews = %+v, want no team, spaces or skip rules", r)
+		}
+	})
+
+	t.Run("reports a space with no name, no repos, a duplicate name or the name Other, and a skip rule with no pattern, keeping the valid ones", func(t *testing.T) {
+		cases := map[string]string{
+			"[[reviews.spaces]]\nrepos = [\"acme\"]\n":                 "reviews.spaces[2]: no name",
+			"[[reviews.spaces]]\nname = \"Life\"\n":                    "reviews.spaces[2] Life: no repos",
+			"[[reviews.spaces]]\nname = \"work\"\nrepos = [\"me\"]\n":  "reviews.spaces[2] work: named twice",
+			"[[reviews.spaces]]\nname = \"Other\"\nrepos = [\"me\"]\n": "reviews.spaces[2] Other: reserved",
+			"[[reviews.skip]]\nunless_review_requested = true\n":       "reviews.skip[1]: no repo, author or title",
+		}
+		for extra, want := range cases {
+			body := "[[reviews.spaces]]\nname = \"Work\"\nrepos = [\"acme\"]\n" + extra
+			cfg, err := Load(configFile(t, body))
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("Load(%q) = %v, want an error saying %q", extra, err, want)
+			}
+			if len(cfg.Reviews.Spaces) != 1 || cfg.Reviews.Spaces[0].Name != "Work" || len(cfg.Reviews.Skip) != 0 {
+				t.Errorf("Load(%q) kept %+v and %+v, want only the valid Work space", extra, cfg.Reviews.Spaces, cfg.Reviews.Skip)
+			}
 		}
 	})
 }
