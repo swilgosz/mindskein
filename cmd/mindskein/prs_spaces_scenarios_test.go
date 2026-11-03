@@ -192,6 +192,15 @@ func TestPrsSpaces(t *testing.T) {
 			t.Errorf("called gh %d times for a space that does not exist", f.callCount())
 		}
 	})
+
+	t.Run("--space with no spaces configured fails, saying how to configure them", func(t *testing.T) {
+		f := spread()
+		useGitHub(t, f)
+		_, err := mindskein(t, "prs", "--space", "Work")
+		if err == nil || !strings.Contains(err.Error(), "[[reviews.spaces]]") || f.callCount() != 0 {
+			t.Errorf("prs --space Work = %v after %d gh calls, want an error naming [[reviews.spaces]] and none", err, f.callCount())
+		}
+	})
 }
 
 // teamConfig names ann as a team author and acme/web as a team repo.
