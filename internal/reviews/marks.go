@@ -147,8 +147,8 @@ func snapshot(m Mark, p PR, requested bool) Mark {
 }
 
 // changed says p is no longer what m marked done: a new head commit, a
-// review newly requested from you, or, for a mark made without a head, any
-// update since.
+// review newly requested from you (it was not when marked, or was asked for
+// again since), or, for a mark made without a head, any update since.
 func (m Mark) changed(p PR, group string) bool {
 	if m.Head == "" {
 		return p.Updated.After(m.MarkedAt)
@@ -156,7 +156,10 @@ func (m Mark) changed(p PR, group string) bool {
 	if p.Head != "" && p.Head != m.Head {
 		return true
 	}
-	return group == GroupWaiting && !m.Requested
+	if group != GroupWaiting {
+		return false
+	}
+	return !m.Requested || p.RequestedAt != nil && p.RequestedAt.After(m.MarkedAt)
 }
 
 func openGroup(id string) bool {

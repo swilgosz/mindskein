@@ -43,7 +43,7 @@ type Report struct {
 
 // cacheVersion changes whenever a cached queue lacks something a newer
 // version reads from it; an older one is still a fallback, never fresh.
-const cacheVersion = 3
+const cacheVersion = 4
 
 type cacheDoc struct {
 	Version int `json:"version"`

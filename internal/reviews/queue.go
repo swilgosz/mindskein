@@ -79,6 +79,10 @@ type PR struct {
 	// Head is the commit the pull request's branch points at, which a done
 	// mark compares against; empty in Done this week, which is not asked for it.
 	Head string `json:"head,omitempty"`
+
+	// RequestedAt is when your review was last asked for, in Waiting on you
+	// only; a done mark made before it comes undone.
+	RequestedAt *time.Time `json:"requested_at,omitempty"`
 }
 
 // Group is one section of the queue.
@@ -244,7 +248,10 @@ func (b *builder) add(group string, p pullRequest, reason string) {
 		return
 	}
 	b.seen[pr.Ref] = true
-	pr.RequestedFromYou = group == GroupWaiting && p.requestedFrom(b.login)
+	if group == GroupWaiting {
+		pr.RequestedFromYou = p.requestedFrom(b.login)
+		pr.RequestedAt = p.lastRequest(b.login)
+	}
 	b.groups[group] = append(b.groups[group], pr)
 }
 
@@ -301,6 +308,23 @@ func (p pullRequest) requestedFrom(login string) bool {
 		}
 	}
 	return false
+}
+
+// lastRequest is when your review was last asked for, by name or through a
+// team, or nil when GitHub names no such request.
+func (p pullRequest) lastRequest(login string) *time.Time {
+	var last *time.Time
+	for _, e := range p.RequestEvents.Nodes {
+		who := e.RequestedReviewer
+		if who == nil || !(who.Kind == "Team" || who.Kind == "User" && strings.EqualFold(who.Login, login)) {
+			continue
+		}
+		if last == nil || e.CreatedAt.After(*last) {
+			at := e.CreatedAt
+			last = &at
+		}
+	}
+	return last
 }
 
 func (p pullRequest) securityFix(author string) bool {

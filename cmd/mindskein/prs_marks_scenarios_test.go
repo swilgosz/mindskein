@@ -213,6 +213,18 @@ func TestPrsDone(t *testing.T) {
 		}
 	})
 
+	t.Run("a done PR comes back when your review is requested again, with no new commits", func(t *testing.T) {
+		f := everyGroup()
+		home := useGitHub(t, f)
+		mustRun(t, "prs", "done", "acme/api#12")
+		ageMarks(t, home, time.Minute)
+		f.waiting[0].requested = time.Now()
+		ageCache(t, home, time.Hour)
+		if got := listed(prsJSON(t))["acme/api#12"]; got[0] != "waiting" {
+			t.Errorf("requested again, acme/api#12 is in %v, want waiting", got)
+		}
+	})
+
 	t.Run("a done PR that has not changed stays out after a week, from Done this week too", func(t *testing.T) {
 		home := useGitHub(t, everyGroup())
 		mustRun(t, "prs", "done", "me/tool#3")
