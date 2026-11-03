@@ -82,6 +82,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		{"priorities", "print the !1/!2 lines in your priorities file", func(args []string, _ io.Reader) error {
 			return cmdPriorities(args, stdout, stderr)
 		}},
+		{"prs", "list the pull requests waiting on you, from every org", func(args []string, _ io.Reader) error {
+			return cmdPrs(args, stdout, stderr)
+		}},
 		{"init", "register mindskein's hooks in Claude Code's settings.json", func(args []string, _ io.Reader) error {
 			return cmdInit(args, stdout, stderr)
 		}},
