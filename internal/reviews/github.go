@@ -85,8 +85,9 @@ const (
     reviewDecision headRefName
     commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
     comments(last: 5) { nodes { author { login __typename } createdAt } }
-    reviews(last: 5) { nodes { author { login __typename } submittedAt } }`
-	mineFields     = openFields + "\n    body"
+    reviews(last: 5) { nodes { author { login __typename } submittedAt } }
+    body`
+	waitingFields  = openFields + "\n    reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } } } }"
 	reviewedFields = baseFields + "\n    mine: reviews(author: $me, last: 5) { nodes { state submittedAt } }"
 )
 
@@ -153,6 +154,10 @@ type pullRequest struct {
 	Comments nodes[activity] `json:"comments"`
 	Reviews  nodes[activity] `json:"reviews"`
 	Mine     nodes[activity] `json:"mine"`
+
+	ReviewRequests nodes[struct {
+		RequestedReviewer *actor `json:"requestedReviewer"`
+	}] `json:"reviewRequests"`
 }
 
 type notification struct {
