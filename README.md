@@ -146,6 +146,7 @@ which is far longer than anything this should ever need.
 mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
+mindskein prs           # pull requests waiting on you, from every org
 mindskein usage         # token spend and what to improve in your setup
 mindskein resolve       # mark a finding fixed; unresolve undoes it
 mindskein serve         # the dashboard in a browser, on 127.0.0.1
@@ -242,6 +243,50 @@ one. Unused-item findings always look back from today, since they describe the
 setup as installed now. Costs use API list prices: on a subscription they are the value consumed,
 not the bill.
 
+### Pull requests
+
+`mindskein prs` lists the pull requests that wait on you, from every org and
+repository your GitHub account reaches, in four groups:
+
+- **Waiting on you**: your review is requested.
+- **Yours**: your open PRs, only when they are blocked on you: failing CI
+  (`fix`), changes requested or new comments (`reply`), approved (`merge it`),
+  or a draft an agent opened (`review it`). One with green CI and nothing new
+  waits on someone else and is left out.
+- **Watching**: open PRs where a notification says you were mentioned or
+  commented, and your review is not requested.
+- **Done this week**: your PRs merged or closed, and PRs you reviewed, in the
+  last 7 days.
+
+```
+PULL REQUESTS
+
+Waiting on you (1)
+  acme/api#12  Add a rate limiter  120 lines  2d  review requested  https://github.com/acme/api/pull/12
+```
+
+`--json` prints the same groups for agents: each PR with its `ref`, `url`,
+owner, repo, number, title, author, changed lines, update time, draft flag,
+group and reason.
+
+It reads GitHub through the [`gh` CLI](https://cli.github.com) you are
+signed in to, and only reads: it never reviews, comments or merges. Each call
+has a timeout. The last good result is kept in `~/.mindskein/prs.json` and
+reused while it is younger than `cache_age`; when a refresh fails, the cached
+list prints with its age and the reason. With no cache, one line says what is
+wrong (gh not installed, not signed in, offline, rate-limited) and how to fix
+it.
+
+"New comments" means the latest comment or review is someone else's and came
+after your last commit. A draft counts as opened by an agent when its body or
+head branch contains `agent_marker`; without one, every draft of yours does.
+
+```toml
+[reviews]
+cache_age = "10m"          # reuse the last result this long; "0" always asks GitHub
+agent_marker = "## Spec"   # text in an agent's draft body or branch name
+```
+
 ### Dashboard
 
 `mindskein serve` opens the same answers in a browser at
@@ -302,6 +347,7 @@ The hooks point at the same path, so there is no need to run `init` again.
   handoffs/         one markdown file per session — title, times, last prompt
   usage/            one JSON file per session — token counts, tool and skill use
   resolved.json     findings you marked fixed with `resolve`; prune keeps it
+  prs.json          the last pull request list `prs` fetched, with its time
   hooks.log         appended to only when a hook fails
   serve.json        the background server, while one runs: pid, port, flags
   serve.log         the background server's output
@@ -309,7 +355,7 @@ The hooks point at the same path, so there is no need to run `init` again.
 
 **Nothing leaves your machine.** No uploads, no telemetry, no account, no third-party service. The store above is all of it, and it is yours to delete.
 
-Today the binary makes no network calls of its own, because everything it reads is a local file. The one exception is `mindskein upgrade`, which runs `go install`: Go fetches the module from GitHub and checks it against the Go checksum database, `sum.golang.org`. That is a fact about this version, not the boundary. **Pulling your work in from the tools it already lives in — a tracker, a code host, a to-do app — is the point of this thing**, and when those adapters land they are outbound reads only, to hosts you name, with credentials that stay on disk here. Fetching your own data in is not the same as sending it out, and sending it out is what this promises never to do.
+Today the binary makes no network calls of its own: everything it reads is a local file, and two commands reach the network through tools you already have. `mindskein prs` runs `gh`, which reads your pull requests and notifications from GitHub with the account gh is signed in to. `mindskein upgrade` runs `go install`: Go fetches the module from GitHub and checks it against the Go checksum database, `sum.golang.org`. That is a fact about this version, not the boundary. **Pulling your work in from the tools it already lives in — a tracker, a code host, a to-do app — is the point of this thing**, and when those adapters land they are outbound reads only, to hosts you name, with credentials that stay on disk here. Fetching your own data in is not the same as sending it out, and sending it out is what this promises never to do.
 
 Be aware of what a handoff holds: **the last message you typed**, verbatim, up to 1500 characters. That is the point — it is what answers "where did we leave off" — but it means anything you paste into a session can land in `~/.mindskein/handoffs/`. The directory is created `0700` and the files `0600`.
 
