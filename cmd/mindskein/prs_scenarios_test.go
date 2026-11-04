@@ -35,6 +35,7 @@ type fakePR struct {
 	state     string
 	body      string
 	head      string
+	oid       string
 	decision  string
 	ci        string
 	committed time.Time
@@ -47,6 +48,8 @@ type fakePR struct {
 	// asked is whom its review is requested from: a login, or a team
 	// written @org/team. Waiting PRs default to the signed-in user.
 	asked string
+	// requested is when it was last asked for, updated when zero.
+	requested time.Time
 }
 
 func (p fakePR) ref() string { return fmt.Sprintf("%s#%d", p.repo, p.number) }
@@ -94,11 +97,24 @@ func (p fakePR) node() map[string]any {
 	if committed.IsZero() {
 		committed = p.updated
 	}
-	requests := []any{}
+	requests, events := []any{}, []any{}
+	var reviewer map[string]any
 	if team, ok := strings.CutPrefix(p.asked, "@"); ok {
-		requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "slug": team}})
+		reviewer = map[string]any{"__typename": "Team", "slug": team}
 	} else if p.asked != "" {
-		requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "User", "login": p.asked}})
+		reviewer = map[string]any{"__typename": "User", "login": p.asked}
+	}
+	if reviewer != nil {
+		requested := p.requested
+		if requested.IsZero() {
+			requested = p.updated
+		}
+		requests = append(requests, map[string]any{"requestedReviewer": reviewer})
+		events = append(events, map[string]any{"createdAt": stamp(requested), "requestedReviewer": reviewer})
+	}
+	oid := p.oid
+	if oid == "" {
+		oid = "oid-" + p.ref()
 	}
 	mine := []any{}
 	if !p.reviewed.IsZero() {
@@ -106,7 +122,7 @@ func (p fakePR) node() map[string]any {
 	}
 	return map[string]any{
 		"number": p.number, "title": p.title, "url": p.url(), "isDraft": p.draft, "state": state,
-		"body": p.body, "headRefName": p.head, "additions": p.add, "deletions": p.del,
+		"body": p.body, "headRefName": p.head, "headRefOid": oid, "additions": p.add, "deletions": p.del,
 		"updatedAt": stamp(p.updated), "mergedAt": stamp(p.merged), "closedAt": stamp(p.closed),
 		"author":         map[string]any{"login": p.author},
 		"repository":     map[string]any{"name": name, "owner": map[string]any{"login": owner}},
@@ -117,6 +133,7 @@ func (p fakePR) node() map[string]any {
 		"reviews":        activities("submittedAt", p.review),
 		"mine":           map[string]any{"nodes": mine},
 		"reviewRequests": map[string]any{"nodes": requests},
+		"requestEvents":  map[string]any{"nodes": events},
 	}
 }
 

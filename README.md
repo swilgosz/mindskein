@@ -147,6 +147,7 @@ mindskein brief         # all three sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
 mindskein prs           # pull requests waiting on you, from every org
+mindskein prs decline   # hide a PR for 7 days; prs done hides it until it changes
 mindskein usage         # token spend and what to improve in your setup
 mindskein resolve       # mark a finding fixed; unresolve undoes it
 mindskein serve         # the dashboard in a browser, on 127.0.0.1
@@ -246,7 +247,7 @@ not the bill.
 ### Pull requests
 
 `mindskein prs` lists the pull requests that wait on you, from every org and
-repository your GitHub account reaches, in four groups:
+repository your GitHub account reaches, in these groups:
 
 - **Waiting on you**: your review is requested.
 - **Yours**: your open PRs, only when they are blocked on you: failing CI
@@ -255,8 +256,10 @@ repository your GitHub account reaches, in four groups:
   waits on someone else and is left out.
 - **Watching**: open PRs where a notification says you were mentioned or
   commented, and your review is not requested.
-- **Done this week**: your PRs merged or closed, and PRs you reviewed, in the
-  last 7 days.
+- **Declined**: PRs you declined, until they come back; shown only while it
+  holds one.
+- **Done this week**: your PRs merged or closed, PRs you reviewed, and PRs you
+  marked done, in the last 7 days.
 
 ```
 PULL REQUESTS
@@ -283,6 +286,26 @@ it.
 after your last commit. A draft counts as opened by an agent when its body or
 head branch contains `agent_marker`; without one, every draft of yours does.
 
+To take a PR off the list, decline it or mark it done. Either takes
+`owner/repo#N` or the PR's URL, and only writes `~/.mindskein/prs-marks.json`:
+nothing is sent to GitHub.
+
+```sh
+mindskein prs decline acme/api#12
+mindskein prs done https://github.com/acme/web/pull/88
+```
+
+- **Declined** PRs stay out for 7 days, listed under Declined, then come
+  back if still open. Declining asks GitHub nothing.
+- **Done** PRs stay out until they change: new commits, or your review newly
+  requested. `done` reads the PR's head commit to tell. When GitHub cannot be
+  reached and no list is cached, the PR is still marked, and comes back
+  once GitHub shows it updated after you marked it.
+
+Marking a PR again replaces its earlier mark. `prune` drops the marks that no
+longer hide anything once they are a week old: every decline, and a done mark
+whose PR the last fetched list shows changed, merged or closed.
+
 Inside each group, PRs are ranked, first to last:
 
 1. Your review is asked of you by name, not through a team.
@@ -292,8 +315,9 @@ Inside each group, PRs are ranked, first to last:
 4. Fresh PRs, updated in the last 5 days, from your team's authors or repos.
 5. Everything else.
 
-Equal ranks print oldest first. A notification on a PR (you were mentioned,
-or a comment you take part in) bumps it one tier and marks it 🔔.
+Equal ranks print oldest first; Declined and Done this week are not ranked and
+print newest first. A notification on a PR (you were mentioned, or a comment
+you take part in) bumps it one tier and marks it 🔔.
 
 With Life Spaces configured, every PR goes to the first space one of whose
 patterns matches its repository, or to **Other**; spaces print in the order
@@ -392,6 +416,7 @@ The hooks point at the same path, so there is no need to run `init` again.
   usage/            one JSON file per session — token counts, tool and skill use
   resolved.json     findings you marked fixed with `resolve`; prune keeps it
   prs.json          the last pull request list `prs` fetched, with its time
+  prs-marks.json    PRs you declined or marked done, with when and their head
   hooks.log         appended to only when a hook fails
   serve.json        the background server, while one runs: pid, port, flags
   serve.log         the background server's output
@@ -444,7 +469,8 @@ definition. They are what to weigh before registering four global hooks:
   that can catch them.
 - **Old state is deleted on a timer, and deletion is permanent.** `prune` drops
   session records after 30 days, handoffs after 90 and usage records after
-  180, and a sweep runs once a day from the `Stop` hook. Set
+  180, and PR marks a week old that no longer hide anything; a sweep runs
+  once a day from the `Stop` hook. Set
   `sessions`/`handoffs`/`usage` to `0` under `[retention]` to keep everything
   forever. `mindskein prune --dry-run` shows what would go.
 - **A session that dies hard keeps its last status for a while.** No hook fires

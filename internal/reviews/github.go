@@ -82,12 +82,14 @@ const (
     author { login }
     repository { name owner { login } }`
 	openFields = baseFields + `
-    reviewDecision headRefName
+    reviewDecision headRefName headRefOid
     commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
     comments(last: 5) { nodes { author { login __typename } createdAt } }
     reviews(last: 5) { nodes { author { login __typename } submittedAt } }
     body`
-	waitingFields  = openFields + "\n    reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } } } }"
+	waitingFields = openFields + `
+    reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } } } }
+    requestEvents: timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on User { login } } } } }`
 	reviewedFields = baseFields + "\n    mine: reviews(author: $me, last: 5) { nodes { state submittedAt } }"
 )
 
@@ -132,6 +134,7 @@ type pullRequest struct {
 	State       string     `json:"state"`
 	Body        string     `json:"body"`
 	HeadRefName string     `json:"headRefName"`
+	HeadRefOid  string     `json:"headRefOid"`
 	Additions   int        `json:"additions"`
 	Deletions   int        `json:"deletions"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
@@ -158,6 +161,10 @@ type pullRequest struct {
 	ReviewRequests nodes[struct {
 		RequestedReviewer *actor `json:"requestedReviewer"`
 	}] `json:"reviewRequests"`
+	RequestEvents nodes[struct {
+		CreatedAt         time.Time `json:"createdAt"`
+		RequestedReviewer *actor    `json:"requestedReviewer"`
+	}] `json:"requestEvents"`
 }
 
 type notification struct {

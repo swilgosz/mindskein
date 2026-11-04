@@ -16,6 +16,7 @@ const (
 	GroupWaiting  = "waiting"
 	GroupYours    = "yours"
 	GroupWatching = "watching"
+	GroupDeclined = "declined"
 	GroupDone     = "done"
 )
 
@@ -23,6 +24,7 @@ var groupNames = map[string]string{
 	GroupWaiting:  "Waiting on you",
 	GroupYours:    "Yours",
 	GroupWatching: "Watching",
+	GroupDeclined: "Declined",
 	GroupDone:     "Done this week",
 }
 
@@ -69,9 +71,18 @@ type PR struct {
 	Notified bool `json:"notified"`
 
 	// Space is the Life Space the pull request belongs to, empty when none
-	// are configured; Rank is its tier, 1 first, and 0 in Done this week.
+	// are configured; Rank is its tier, 1 first, and 0 in Declined and Done
+	// this week.
 	Space string `json:"space,omitempty"`
 	Rank  int    `json:"rank,omitempty"`
+
+	// Head is the commit the pull request's branch points at, which a done
+	// mark compares against; empty in Done this week, which is not asked for it.
+	Head string `json:"head,omitempty"`
+
+	// RequestedAt is when your review was last asked for, in Waiting on you
+	// only; a done mark made before it comes undone.
+	RequestedAt *time.Time `json:"requested_at,omitempty"`
 }
 
 // Group is one section of the queue.
@@ -232,18 +243,27 @@ func (b *builder) add(group string, p pullRequest, reason string) {
 	if p.Number == 0 || reason == "" {
 		return
 	}
-	owner, repo := p.Repository.Owner.Login, p.Repository.Name
-	ref := Ref(owner, repo, p.Number)
-	if b.seen[ref] {
+	pr := p.pr(group, reason)
+	if b.seen[pr.Ref] {
 		return
 	}
-	b.seen[ref] = true
+	b.seen[pr.Ref] = true
+	if group == GroupWaiting {
+		pr.RequestedFromYou = p.requestedFrom(b.login)
+		pr.RequestedAt = p.lastRequest(b.login)
+	}
+	b.groups[group] = append(b.groups[group], pr)
+}
+
+// pr is p as the queue lists it, in group for reason.
+func (p pullRequest) pr(group, reason string) PR {
+	owner, repo := p.Repository.Owner.Login, p.Repository.Name
 	author := ""
 	if p.Author != nil {
 		author = p.Author.Login
 	}
-	b.groups[group] = append(b.groups[group], PR{
-		Ref:     ref,
+	return PR{
+		Ref:     Ref(owner, repo, p.Number),
 		URL:     p.URL,
 		Owner:   owner,
 		Repo:    repo,
@@ -255,10 +275,10 @@ func (b *builder) add(group string, p pullRequest, reason string) {
 		Draft:   p.IsDraft,
 		Group:   group,
 		Reason:  reason,
+		Head:    p.HeadRefOid,
 
-		RequestedFromYou: group == GroupWaiting && p.requestedFrom(b.login),
-		SecurityFix:      p.securityFix(author),
-	})
+		SecurityFix: p.securityFix(author),
+	}
 }
 
 // blockedOnYou is why a pull request of yours waits on you, or "" when it
@@ -288,6 +308,23 @@ func (p pullRequest) requestedFrom(login string) bool {
 		}
 	}
 	return false
+}
+
+// lastRequest is when your review was last asked for, by name or through a
+// team, or nil when GitHub names no such request.
+func (p pullRequest) lastRequest(login string) *time.Time {
+	var last *time.Time
+	for _, e := range p.RequestEvents.Nodes {
+		who := e.RequestedReviewer
+		if who == nil || !(who.Kind == "Team" || who.Kind == "User" && strings.EqualFold(who.Login, login)) {
+			continue
+		}
+		if last == nil || e.CreatedAt.After(*last) {
+			at := e.CreatedAt
+			last = &at
+		}
+	}
+	return last
 }
 
 func (p pullRequest) securityFix(author string) bool {

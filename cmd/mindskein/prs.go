@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/swilgosz/mindskein/internal/config"
 	"github.com/swilgosz/mindskein/internal/reviews"
 	"github.com/swilgosz/mindskein/internal/session"
 )
@@ -21,16 +22,24 @@ var (
 	ghTimeout                = reviews.DefaultTimeout
 )
 
-// cmdPrs prints the pull requests waiting on you, from every org.
+// cmdPrs prints the pull requests waiting on you, from every org, or with
+// decline or done marks one so it stops showing.
 //
 // GitHub being out of reach is never an error: the command prints the
 // cached queue with its age, or one line saying what is wrong and how to fix
 // it, and exits cleanly.
 func cmdPrs(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && (args[0] == "decline" || args[0] == "done") {
+		return cmdPrsMark(args[0], args[1:], stdout, stderr)
+	}
 	cfg, cfgErr := loadConfig()
 
 	fs := flag.NewFlagSet("prs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: mindskein prs [--json] [--space <name>] | mindskein prs decline|done <owner/repo#N | URL>")
+		fs.PrintDefaults()
+	}
 	asJSON := fs.Bool("json", false, "print the queue as JSON")
 	spaceName := fs.String("space", "", "list only the PRs of this Life Space")
 	if err := fs.Parse(args); err != nil {
@@ -53,23 +62,19 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	var cachePath string
-	if home, err := session.Home(); err == nil {
-		cachePath = filepath.Join(home, reviews.CacheFile)
-	}
 	now := time.Now().UTC()
-	report, err := reviews.Read(context.Background(), reviews.Options{
-		Run:       ghRun,
-		Timeout:   ghTimeout,
-		CacheAge:  cfg.Reviews.CacheAge.Duration(),
-		Marker:    cfg.Reviews.AgentMarker,
-		CachePath: cachePath,
-		Now:       now,
-	})
+	report, err := reviews.Read(context.Background(), readOptions(cfg, now))
 	if err != nil {
 		fmt.Fprintf(stderr, "mindskein: saving the PR cache: %v\n", err)
 	}
 	if report.Error == "" {
+		var marks []reviews.Mark
+		if store, err := reviews.DefaultMarks(); err == nil {
+			if marks, err = store.Load(); err != nil {
+				fmt.Fprintf(stderr, "mindskein: reading the PR marks: %v\n", err)
+			}
+		}
+		report.Queue = reviews.Apply(report.Queue, marks, now)
 		report.Queue = reviews.Arrange(report.Queue, cfg.Reviews, now)
 		if space != "" {
 			report.Queue = reviews.Only(report.Queue, space)
@@ -83,4 +88,74 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 		return enc.Encode(report)
 	}
 	return reviews.Print(stdout, report, now)
+}
+
+func readOptions(cfg config.Config, now time.Time) reviews.Options {
+	var cachePath string
+	if home, err := session.Home(); err == nil {
+		cachePath = filepath.Join(home, reviews.CacheFile)
+	}
+	return reviews.Options{
+		Run:       ghRun,
+		Timeout:   ghTimeout,
+		CacheAge:  cfg.Reviews.CacheAge.Duration(),
+		Marker:    cfg.Reviews.AgentMarker,
+		CachePath: cachePath,
+		Now:       now,
+	}
+}
+
+// cmdPrsMark declines a pull request or marks it done. Either writes only
+// the local marks file: declining asks GitHub nothing, and done only reads
+// the head commit to tell later when the pull request changed.
+func cmdPrsMark(verb string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("prs "+verb, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { fmt.Fprintf(stderr, "Usage: mindskein prs %s <owner/repo#N | URL>\n", verb) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return fmt.Errorf("prs %s: want one pull request, owner/repo#N or its URL", verb)
+	}
+	ref, err := reviews.ParseRef(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	store, err := reviews.DefaultMarks()
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	if verb == "decline" {
+		if err := store.Put(reviews.Mark{Ref: ref, Kind: reviews.MarkDeclined, MarkedAt: now}); err != nil {
+			return err
+		}
+		back := now.Add(reviews.DeclineWindow).Local().Format("Mon Jan 2")
+		fmt.Fprintf(stdout, "declined %s: out of the queue until %s, back then if still open\n", ref, back)
+		return nil
+	}
+
+	cfg, cfgErr := loadConfig()
+	if cfgErr != nil {
+		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
+	}
+	mark, offline, err := reviews.NewDoneMark(context.Background(), readOptions(cfg, now), ref)
+	if err != nil {
+		return err
+	}
+	if err := store.Put(mark); err != nil {
+		return err
+	}
+	if offline != "" {
+		fmt.Fprintf(stdout, "marked %s done: out of the queue until it is next updated on GitHub (%s)\n", mark.Ref, offline)
+		return nil
+	}
+	fmt.Fprintf(stdout, "marked %s done: out of the queue until it gets new commits or a new review request\n", mark.Ref)
+	return nil
 }
