@@ -804,6 +804,41 @@ function renderOverview(d, el, p) {
     foot.innerHTML = parts.join(" · ");
     (ssBody || el.lastElementChild.querySelector(".body")).appendChild(foot);
   }
+
+  renderReviews(el, d.reviews);
+}
+
+// A PR's URL comes from GitHub; only a web link is made clickable, so a
+// stray value can never become a javascript: link.
+const prLink = (p) =>
+  /^https:\/\//.test(p.url || "")
+    ? `<a class="mono" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.ref)}</a>`
+    : `<span class="mono">${esc(p.ref)}</span>`;
+
+function renderReviews(el, rv) {
+  const right = rv && rv.cached ? `cached ${esc(rv.cache_age)} ago` : "";
+  const note = rv && rv.refresh_error ? `refresh failed: ${esc(rv.refresh_error)}` : "";
+  const body = card(el, rv?.heading || "REVIEWS", { caps: true, right, note });
+  if (!rv) {
+    body.innerHTML = `<p class="empty">Not reported.</p>`;
+    return;
+  }
+  if (rv.error) {
+    body.innerHTML = `<p class="error-text">${esc(rv.error)}</p>`;
+    return;
+  }
+  if (!(rv.counts || []).length) {
+    body.innerHTML = `<p class="empty">Nothing waiting on you.</p>`;
+    return;
+  }
+  const counts = rv.counts
+    .map((c) => {
+      const groups = c.groups.map((g) => `${esc(fmt.int(g.count))} ${esc(g.label)}${g.notified ? " 🔔" : ""}`).join(" · ");
+      return `<div class="rv-count">${c.space ? `<span class="label">${esc(c.space)}</span>` : ""}<span>${groups}</span></div>`;
+    })
+    .join("");
+  const top = (rv.top || []).map((p) => `<div class="rv-pick"><span class="arrow">→</span>${prLink(p)}<span class="why">${esc(p.why)}</span></div>`).join("");
+  body.innerHTML = `<div class="rv-counts">${counts}</div>${top ? `<div class="rv-top">${top}</div>` : ""}`;
 }
 
 // ---------- setup ----------

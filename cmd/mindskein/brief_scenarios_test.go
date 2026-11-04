@@ -22,6 +22,7 @@ func briefHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("MINDSKEIN_HOME", home)
+	noGitHub(t)
 
 	notes := t.TempDir()
 	body := "## Priorities\n- [ ] !1 [[Wren Deploy Tool]] — ship the installer\n" +
@@ -39,6 +40,15 @@ func briefHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return home
+}
+
+// noGitHub answers the brief's REVIEWS with an empty queue, so a test about
+// the other sections never reaches the real gh.
+func noGitHub(t *testing.T) {
+	t.Helper()
+	previous := ghRun
+	ghRun = (&fakeGitHub{login: "me"}).run
+	t.Cleanup(func() { ghRun = previous })
 }
 
 // ended parses a stored end time, which is always UTC on disk.
@@ -114,6 +124,7 @@ func TestBriefCommand(t *testing.T) {
 
 	t.Run("an unconfigured priorities file still leaves the other two sections printed", func(t *testing.T) {
 		t.Setenv("MINDSKEIN_HOME", t.TempDir())
+		noGitHub(t)
 		out := runBrief(t)
 		if !strings.Contains(out, "config.toml") {
 			t.Errorf("brief does not say where to configure a priorities file:\n%s", out)
@@ -127,6 +138,7 @@ func TestBriefCommand(t *testing.T) {
 
 	t.Run("an empty registry prints the sessions hint", func(t *testing.T) {
 		t.Setenv("MINDSKEIN_HOME", t.TempDir())
+		noGitHub(t)
 		if out := runBrief(t); !strings.Contains(out, "none recorded yet") {
 			t.Errorf("brief does not explain an empty registry:\n%s", out)
 		}

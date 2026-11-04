@@ -55,21 +55,25 @@ func Arrange(q Queue, rules config.Reviews, now time.Time) Queue {
 			prs = append(prs, p)
 		}
 		if openGroup(g.ID) {
-			slices.SortStableFunc(prs, func(a, b PR) int {
-				if c := cmp.Compare(a.Rank, b.Rank); c != 0 {
-					return c
-				}
-				if c := a.Updated.Compare(b.Updated); c != 0 {
-					return c
-				}
-				return cmp.Compare(a.Ref, b.Ref)
-			})
+			slices.SortStableFunc(prs, byRank)
 		}
 		g.PRs = prs
 		groups[i] = g
 	}
 	q.Groups = groups
 	return q
+}
+
+// byRank orders open pull requests: a lower rank first, equal ranks oldest
+// first.
+func byRank(a, b PR) int {
+	if c := cmp.Compare(a.Rank, b.Rank); c != 0 {
+		return c
+	}
+	if c := a.Updated.Compare(b.Updated); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Ref, b.Ref)
 }
 
 // SpaceNamed is the configured space called name, whatever its case, Other

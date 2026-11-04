@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/swilgosz/mindskein/internal/config"
@@ -63,22 +64,9 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 	}
 
 	now := time.Now().UTC()
-	report, err := reviews.Read(context.Background(), readOptions(cfg, now))
-	if err != nil {
-		fmt.Fprintf(stderr, "mindskein: saving the PR cache: %v\n", err)
-	}
-	if report.Error == "" {
-		var marks []reviews.Mark
-		if store, err := reviews.DefaultMarks(); err == nil {
-			if marks, err = store.Load(); err != nil {
-				fmt.Fprintf(stderr, "mindskein: reading the PR marks: %v\n", err)
-			}
-		}
-		report.Queue = reviews.Apply(report.Queue, marks, now)
-		report.Queue = reviews.Arrange(report.Queue, cfg.Reviews, now)
-		if space != "" {
-			report.Queue = reviews.Only(report.Queue, space)
-		}
+	report := readQueue(cfg, now, stderr)
+	if report.Error == "" && space != "" {
+		report.Queue = reviews.Only(report.Queue, space)
 	}
 
 	if *asJSON {
@@ -88,6 +76,36 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 		return enc.Encode(report)
 	}
 	return reviews.Print(stdout, report, now)
+}
+
+// queueMu lets one read of the queue run at a time. A refresh takes seconds,
+// and a dashboard request arriving during one would otherwise start its own;
+// waiting for it finds the cache fresh instead.
+var queueMu sync.Mutex
+
+// readQueue is the queue as every reader shows it: read cache-first, with
+// the decline and done marks taken in and the user's rules applied. What
+// goes wrong on the way is warned about on warn, never returned: GitHub
+// being out of reach is the report's one line.
+func readQueue(cfg config.Config, now time.Time, warn io.Writer) reviews.Report {
+	queueMu.Lock()
+	report, err := reviews.Read(context.Background(), readOptions(cfg, now))
+	queueMu.Unlock()
+	if err != nil {
+		fmt.Fprintf(warn, "mindskein: saving the PR cache: %v\n", err)
+	}
+	if report.Error != "" {
+		return report
+	}
+	var marks []reviews.Mark
+	if store, err := reviews.DefaultMarks(); err == nil {
+		if marks, err = store.Load(); err != nil {
+			fmt.Fprintf(warn, "mindskein: reading the PR marks: %v\n", err)
+		}
+	}
+	report.Queue = reviews.Apply(report.Queue, marks, now)
+	report.Queue = reviews.Arrange(report.Queue, cfg.Reviews, now)
+	return report
 }
 
 func readOptions(cfg config.Config, now time.Time) reviews.Options {

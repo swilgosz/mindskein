@@ -20,9 +20,17 @@ WHERE WE LEFT OFF
   acme-cli · signing   2026-08-21 23:40  the notarization step still fails on…
   notes                2026-08-21 18:12  rewrite the second paragraph, it's flat
   acme-api             2026-08-20 21:05  (no prompt recorded)
+
+REVIEWS
+  Work      1 waiting on you · 1 yours blocked on you
+  Business  1 yours blocked on you
+  Other     1 watching 🔔
+  → acme/api#412  review requested, 38 lines, 2d  https://github.com/acme/api/pull/412
+  → acme/web#88   yours, approved: merge it       https://github.com/acme/web/pull/88
+  → me/tool#13    yours, agent draft: review it   https://github.com/me/tool/pull/13
 ```
 
-Three sections, three sources: a markdown file you already keep, a registry of live Claude Code sessions, and the last handoff from each piece of work.
+Four sections, four sources: a markdown file you already keep, a registry of live Claude Code sessions, the last handoff from each piece of work, and the pull requests GitHub says wait on you.
 
 ## What it is
 
@@ -143,7 +151,7 @@ which is far longer than anything this should ever need.
 ## Use
 
 ```sh
-mindskein brief         # all three sections — the morning read
+mindskein brief         # all four sections — the morning read
 mindskein status        # live sessions only — the mid-day check
 mindskein priorities    # the priorities file only
 mindskein prs           # pull requests waiting on you, from every org
@@ -157,7 +165,8 @@ mindskein upgrade       # build the newest version with Go and swap it in
 ```
 
 `--all` widens every section: the `!3` backlog, sessions that have ended or
-aged out, and every workstream rather than the newest few.
+aged out, and every workstream rather than the newest few. `--json` prints
+the brief for agents, REVIEWS included as `reviews`.
 
 Set `MINDSKEIN_PROJECT` before launching Claude to name a workstream that spans
 several folders and sessions. It is the only grouping key that does, and
@@ -274,6 +283,14 @@ group, reason, `space` and `rank`, plus whether its review is asked of you by
 name, whether it is a security fix and whether a notification is on it.
 `--space <name>` narrows the list, or the JSON, to one Life Space.
 
+`mindskein brief` ends with the short version, REVIEWS: per space, how many
+PRs wait on you, are yours and blocked on you, or are watched, then the 3
+best-ranked open PRs across every space, each with one line saying why.
+Declined PRs, done ones and skipped ones count nowhere, as in `prs`. It reads
+the same cache, so a brief right after `prs` asks GitHub nothing; when
+GitHub cannot be reached, REVIEWS is the one line saying why, or the cached
+list with its age, and the other sections print as usual.
+
 It reads GitHub through the [`gh` CLI](https://cli.github.com) you are
 signed in to, and only reads: it never reviews, comments or merges. Each call
 has a timeout. The last good result is kept in `~/.mindskein/prs.json` and
@@ -359,8 +376,10 @@ unless_review_requested = true   # keep it when your review is asked of you by n
 
 `mindskein serve` opens the same answers in a browser at
 `http://127.0.0.1:8787`: usage, the brief, setup (are the hooks registered,
-what failed) and the health of each Claude config. It listens on the loopback
-interface only, and the page loads nothing from the internet.
+what failed) and the health of each Claude config. The Brief tab's Reviews
+card shows the same counts and top 3 as the brief, each PR linked to GitHub.
+It listens on the loopback interface only, and the page loads nothing from
+the internet.
 It only reads: recommendations show each finding's id and how many are
 resolved, and resolving stays on the command line.
 
