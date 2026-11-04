@@ -32,6 +32,7 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("prs", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print the queue as JSON")
+	spaceName := fs.String("space", "", "list only the PRs of this Life Space")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -43,6 +44,13 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 	}
 	if cfgErr != nil {
 		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
+	}
+	var space string
+	if *spaceName != "" {
+		var err error
+		if space, err = reviews.SpaceNamed(cfg.Reviews, *spaceName); err != nil {
+			return err
+		}
 	}
 
 	var cachePath string
@@ -60,6 +68,12 @@ func cmdPrs(args []string, stdout, stderr io.Writer) error {
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "mindskein: saving the PR cache: %v\n", err)
+	}
+	if report.Error == "" {
+		report.Queue = reviews.Arrange(report.Queue, cfg.Reviews, now)
+		if space != "" {
+			report.Queue = reviews.Only(report.Queue, space)
+		}
 	}
 
 	if *asJSON {

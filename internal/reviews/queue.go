@@ -55,6 +55,23 @@ type PR struct {
 	Draft   bool      `json:"draft"`
 	Group   string    `json:"group"`
 	Reason  string    `json:"reason"`
+
+	// RequestedFromYou says your review is requested from you by name, not
+	// through a team you are in.
+	RequestedFromYou bool `json:"requested_from_you"`
+
+	// SecurityFix says the title names a CVE or GHSA advisory, or the body
+	// of a dependency bump does.
+	SecurityFix bool `json:"security_fix"`
+
+	// Notified says a notification mentions you on it or carries a comment
+	// you take part in.
+	Notified bool `json:"notified"`
+
+	// Space is the Life Space the pull request belongs to, empty when none
+	// are configured; Rank is its tier, 1 first, and 0 in Done this week.
+	Space string `json:"space,omitempty"`
+	Rank  int    `json:"rank,omitempty"`
 }
 
 // Group is one section of the queue.
@@ -69,7 +86,11 @@ type Group struct {
 type Queue struct {
 	Login     string    `json:"login"`
 	FetchedAt time.Time `json:"fetched_at"`
-	Groups    []Group   `json:"groups"`
+
+	// Spaces are the Life Spaces in the order they are shown, Other last;
+	// none when the user configured none.
+	Spaces []string `json:"spaces,omitempty"`
+	Groups []Group  `json:"groups"`
 }
 
 // Ref writes a pull request the way GitHub links it in text: owner/repo#N.
@@ -97,8 +118,8 @@ func Fetch(ctx context.Context, run Runner, timeout time.Duration, marker string
 	)
 	errs := make([]error, 5)
 	for i, job := range []func() error{
-		func() (err error) { waiting, err = g.search(ctx, login, searchWaiting, openFields); return },
-		func() (err error) { mine, err = g.search(ctx, login, searchMine, mineFields); return },
+		func() (err error) { waiting, err = g.search(ctx, login, searchWaiting, waitingFields); return },
+		func() (err error) { mine, err = g.search(ctx, login, searchMine, openFields); return },
 		func() (err error) {
 			closed, err = g.search(ctx, login, fmt.Sprintf(searchClosed, day), baseFields)
 			return
@@ -120,7 +141,7 @@ func Fetch(ctx context.Context, run Runner, timeout time.Duration, marker string
 		return Queue{}, err
 	}
 
-	b := builder{login: login, marker: marker, seen: map[string]bool{}, groups: map[string][]PR{}}
+	b := builder{login: login, marker: marker, seen: map[string]bool{}, notified: map[string]bool{}, groups: map[string][]PR{}}
 	for _, p := range waiting {
 		b.add(GroupWaiting, p, ReasonReviewRequested)
 	}
@@ -130,6 +151,7 @@ func Fetch(ctx context.Context, run Runner, timeout time.Duration, marker string
 
 	var unseen []watch
 	for _, w := range watches {
+		b.notified[w.ref()] = true
 		if !b.seen[w.ref()] {
 			unseen = append(unseen, w)
 		}
@@ -169,6 +191,9 @@ func Fetch(ctx context.Context, run Runner, timeout time.Duration, marker string
 	q := Queue{Login: login, FetchedAt: now}
 	for _, id := range []string{GroupWaiting, GroupYours, GroupWatching, GroupDone} {
 		prs := b.groups[id]
+		for i := range prs {
+			prs[i].Notified = id != GroupDone && b.notified[prs[i].Ref]
+		}
 		slices.SortStableFunc(prs, func(a, b PR) int {
 			if c := b.Updated.Compare(a.Updated); c != 0 {
 				return c
@@ -193,10 +218,11 @@ func firstError(errs []error) error {
 }
 
 type builder struct {
-	login  string
-	marker string
-	seen   map[string]bool
-	groups map[string][]PR
+	login    string
+	marker   string
+	seen     map[string]bool
+	notified map[string]bool
+	groups   map[string][]PR
 }
 
 // add puts p in group with reason, unless it is already in an earlier group
@@ -229,6 +255,9 @@ func (b *builder) add(group string, p pullRequest, reason string) {
 		Draft:   p.IsDraft,
 		Group:   group,
 		Reason:  reason,
+
+		RequestedFromYou: group == GroupWaiting && p.requestedFrom(b.login),
+		SecurityFix:      p.securityFix(author),
 	})
 }
 
@@ -250,6 +279,36 @@ func (b *builder) blockedOnYou(p pullRequest) string {
 		return ReasonAgentDraft
 	}
 	return ""
+}
+
+func (p pullRequest) requestedFrom(login string) bool {
+	for _, r := range p.ReviewRequests.Nodes {
+		if who := r.RequestedReviewer; who != nil && who.Kind == "User" && strings.EqualFold(who.Login, login) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p pullRequest) securityFix(author string) bool {
+	return namesAdvisory(p.Title) || (dependencyBump(author, p.Title) && namesAdvisory(p.Body))
+}
+
+func namesAdvisory(s string) bool {
+	s = strings.ToUpper(s)
+	return strings.Contains(s, "CVE-") || strings.Contains(s, "GHSA-")
+}
+
+// dependencyBump recognises the pull requests Dependabot and Renovate open,
+// by their author or by the titles they use.
+func dependencyBump(author, title string) bool {
+	switch strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(author, "app/"), "[bot]")) {
+	case "dependabot", "dependabot-preview", "renovate":
+		return true
+	}
+	t := strings.ToLower(title)
+	return strings.HasPrefix(t, "bump ") || strings.HasPrefix(t, "update dependency ") ||
+		strings.Contains(t, "(deps)") || strings.Contains(t, "(deps-dev)")
 }
 
 func (p pullRequest) authoredBy(login string) bool {

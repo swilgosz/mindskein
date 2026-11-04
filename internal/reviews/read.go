@@ -41,7 +41,13 @@ type Report struct {
 	Queue
 }
 
+// cacheVersion changes whenever a cached queue lacks something a newer
+// version reads from it; an older one is still a fallback, never fresh.
+const cacheVersion = 2
+
 type cacheDoc struct {
+	Version int `json:"version"`
+
 	// Marker is the agent marker the reasons were judged with; a queue
 	// judged with another one is not reused.
 	Marker string `json:"agent_marker"`
@@ -54,7 +60,7 @@ type cacheDoc struct {
 // written; the report is usable either way.
 func Read(ctx context.Context, opts Options) (Report, error) {
 	cached, haveCache := loadCache(opts.CachePath)
-	if haveCache && cached.Marker == opts.Marker {
+	if haveCache && cached.Marker == opts.Marker && cached.Version == cacheVersion {
 		if age := opts.Now.Sub(cached.Queue.FetchedAt); age >= 0 && age < opts.CacheAge {
 			return fromCache(cached.Queue, opts.Now, ""), nil
 		}
@@ -67,7 +73,7 @@ func Read(ctx context.Context, opts Options) (Report, error) {
 		}
 		return Report{Error: Explain(err)}, nil
 	}
-	return Report{Queue: q}, saveCache(opts.CachePath, cacheDoc{Marker: opts.Marker, Queue: q})
+	return Report{Queue: q}, saveCache(opts.CachePath, cacheDoc{Version: cacheVersion, Marker: opts.Marker, Queue: q})
 }
 
 func fromCache(q Queue, now time.Time, refreshErr string) Report {

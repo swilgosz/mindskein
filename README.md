@@ -267,7 +267,9 @@ Waiting on you (1)
 
 `--json` prints the same groups for agents: each PR with its `ref`, `url`,
 owner, repo, number, title, author, changed lines, update time, draft flag,
-group and reason.
+group, reason, `space` and `rank`, plus whether its review is asked of you by
+name, whether it is a security fix and whether a notification is on it.
+`--space <name>` narrows the list, or the JSON, to one Life Space.
 
 It reads GitHub through the [`gh` CLI](https://cli.github.com) you are
 signed in to, and only reads: it never reviews, comments or merges. Each call
@@ -281,10 +283,52 @@ it.
 after your last commit. A draft counts as opened by an agent when its body or
 head branch contains `agent_marker`; without one, every draft of yours does.
 
+Inside each group, PRs are ranked, first to last:
+
+1. Your review is asked of you by name, not through a team.
+2. Yours, blocked on you.
+3. Security fixes under 200 changed lines: `CVE-` or `GHSA-` in the title,
+   or in the body of a dependency bump.
+4. Fresh PRs, updated in the last 5 days, from your team's authors or repos.
+5. Everything else.
+
+Equal ranks print oldest first. A notification on a PR (you were mentioned,
+or a comment you take part in) bumps it one tier and marks it 🔔.
+
+With Life Spaces configured, every PR goes to the first space one of whose
+patterns matches its repository, or to **Other**; spaces print in the order
+written, Other last. Without any, the list is not split. Skip rules drop the
+PRs they match before anything is ranked; a rule with several patterns needs
+all of them to match.
+
+Repo patterns are an owner (`acme`, every repository it has) or
+`owner/repo`; author and title patterns match the whole login or title. In
+all of them `*` stands for any run of characters, and case is ignored. Every
+key is optional.
+
 ```toml
 [reviews]
 cache_age = "10m"          # reuse the last result this long; "0" always asks GitHub
 agent_marker = "## Spec"   # text in an agent's draft body or branch name
+
+[reviews.team]
+authors = ["ann", "bob"]   # whose fresh PRs rank above the rest
+repos = ["acme/api"]
+
+[[reviews.spaces]]
+name = "Work"
+repos = ["acme", "globex/web"]
+
+[[reviews.spaces]]
+name = "Side projects"
+repos = ["me"]
+
+[[reviews.skip]]
+repo = "acme/legacy-*"
+
+[[reviews.skip]]
+title = "wip*"
+unless_review_requested = true   # keep it when your review is asked of you by name
 ```
 
 ### Dashboard
