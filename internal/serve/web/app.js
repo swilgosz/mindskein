@@ -808,40 +808,50 @@ function renderOverview(d, el, p) {
   loadReviews(el, d);
 }
 
-// A browser opens about six connections to one server, and this request holds
-// one for as long as GitHub takes. One per draw would use them all after a few
-// refreshes and queue every other request on the page behind them, so draws
-// share the one in flight.
-let reviewsRequest = null;
-function fetchReviews() {
-  reviewsRequest ||= fetchJSON("api/reviews").finally(() => {
-    reviewsRequest = null;
-  });
-  return reviewsRequest;
+// A browser opens about six connections to one server, and a request waiting
+// on GitHub holds one for as long as GitHub takes. One per draw would use them
+// all after a few refreshes and queue every other request on the page behind
+// them, so draws share the one in flight.
+const reviewsRequests = new Map();
+function fetchReviews(url) {
+  if (!reviewsRequests.has(url)) {
+    reviewsRequests.set(url, fetchJSON(url).finally(() => reviewsRequests.delete(url)));
+  }
+  return reviewsRequests.get(url);
 }
 
-// loadReviews draws the REVIEWS card once GitHub answers, so the rest of the
-// brief does not wait on it. The answer is kept on d: a redraw from the same
-// response reuses it, and a failure is retried on the next draw.
+// loadReviews draws the REVIEWS card without holding up the rest of the brief.
+// The answer is kept on d, so a redraw from the same response reuses it, and a
+// request that failed is tried again on the next draw.
 function loadReviews(el, d) {
+  let slot;
   if (d.reviews) {
     renderReviews(el, d.reviews);
-    return;
+    slot = el.lastElementChild;
+  } else {
+    const body = card(el, "REVIEWS", { caps: true });
+    body.innerHTML = `<p class="loading">Loading…</p>`;
+    slot = body.parentElement;
   }
-  const body = card(el, "REVIEWS", { caps: true });
-  body.innerHTML = `<p class="loading">Loading…</p>`;
-  const slot = body.parentElement;
-  fetchReviews()
-    .then(
-      (rv) => (d.reviews = rv),
-      (e) => ({ error: e && e.message ? e.message : String(e) })
-    )
-    .then((rv) => {
-      if (!slot.isConnected) return;
-      const frag = document.createDocumentFragment();
-      renderReviews(frag, rv);
-      slot.replaceWith(frag);
-    });
+  settleReviews(d, (rv) => {
+    if (!slot.isConnected) return;
+    const frag = document.createDocumentFragment();
+    renderReviews(frag, rv);
+    const next = frag.firstElementChild;
+    slot.replaceWith(frag);
+    slot = next;
+  });
+}
+
+// settleReviews shows the cached queue, then a fresh one if that is stale.
+async function settleReviews(d, show) {
+  try {
+    if (!d.reviews) show((d.reviews = await fetchReviews("api/reviews?cached=1")));
+    if (d.reviews.stale) show((d.reviews = await fetchReviews("api/reviews")));
+  } catch (e) {
+    const why = e && e.message ? e.message : String(e);
+    show(d.reviews ? { ...d.reviews, stale: false, refresh_error: why } : { error: why });
+  }
 }
 
 // A PR's URL comes from GitHub; only a web link is made clickable, so a
@@ -852,7 +862,7 @@ const prLink = (p) =>
     : `<span class="mono">${esc(p.ref)}</span>`;
 
 function renderReviews(el, rv) {
-  const right = rv && rv.cached ? `cached ${esc(rv.cache_age)} ago` : "";
+  const right = rv && rv.cached ? `cached ${esc(rv.cache_age)} ago${rv.stale ? " · refreshing…" : ""}` : "";
   const note = rv && rv.refresh_error ? `refresh failed: ${esc(rv.refresh_error)}` : "";
   const body = card(el, rv?.heading || "REVIEWS", { caps: true, right, note });
   if (!rv) {

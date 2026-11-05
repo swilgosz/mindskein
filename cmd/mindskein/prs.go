@@ -94,6 +94,21 @@ func readQueue(cfg config.Config, now time.Time, warn io.Writer) reviews.Report 
 	if err != nil {
 		fmt.Fprintf(warn, "mindskein: saving the PR cache: %v\n", err)
 	}
+	return arrangeQueue(report, cfg, now, warn)
+}
+
+// readCachedQueue is the queue from the cache whatever its age, so it waits
+// neither on GitHub nor on a fetch in flight. With no cache to show, it reads
+// as readQueue does.
+func readCachedQueue(cfg config.Config, now time.Time, warn io.Writer) reviews.Report {
+	report, ok := reviews.ReadCached(readOptions(cfg, now))
+	if !ok {
+		return readQueue(cfg, now, warn)
+	}
+	return arrangeQueue(report, cfg, now, warn)
+}
+
+func arrangeQueue(report reviews.Report, cfg config.Config, now time.Time, warn io.Writer) reviews.Report {
 	if report.Error != "" {
 		return report
 	}
