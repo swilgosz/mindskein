@@ -53,8 +53,8 @@ func morningQueue() *fakeGitHub {
 	}
 }
 
-// briefReviewsJSON is the REVIEWS block as brief --json and /api/brief carry
-// it.
+// briefReviewsJSON is the REVIEWS block as brief --json and /api/reviews
+// carry it.
 type briefReviewsJSON struct {
 	Heading      string `json:"heading"`
 	Error        string `json:"error"`
@@ -218,7 +218,7 @@ func TestBriefReviews(t *testing.T) {
 		}
 	})
 
-	t.Run("the dashboard's /api/brief carries the same REVIEWS block as brief --json", func(t *testing.T) {
+	t.Run("the dashboard's /api/reviews carries the same REVIEWS block as brief --json", func(t *testing.T) {
 		home := useGitHub(t, morningQueue())
 		reviewsConfig(t, home, briefSpaces)
 		mustRun(t, "prs")
@@ -227,14 +227,34 @@ func TestBriefReviews(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got struct {
-			Reviews briefReviewsJSON `json:"reviews"`
-		}
-		apiGet(t, serveHandler(cfg), "/api/brief", &got)
-		gotJSON, _ := json.Marshal(got.Reviews)
+		var got briefReviewsJSON
+		apiGet(t, serveHandler(cfg), "/api/reviews", &got)
+		gotJSON, _ := json.Marshal(got)
 		wantJSON, _ := json.Marshal(want)
 		if string(gotJSON) != string(wantJSON) {
-			t.Errorf("/api/brief reviews =\n%s\nwant\n%s", gotJSON, wantJSON)
+			t.Errorf("/api/reviews =\n%s\nwant\n%s", gotJSON, wantJSON)
+		}
+	})
+
+	t.Run("the dashboard's /api/brief answers without asking GitHub, so a slow gh cannot hold up the other sections", func(t *testing.T) {
+		f := morningQueue()
+		useGitHub(t, f)
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]json.RawMessage
+		apiGet(t, serveHandler(cfg), "/api/brief", &got)
+		if n := f.callCount(); n != 0 {
+			t.Errorf("/api/brief called gh %d times, want none", n)
+		}
+		if _, ok := got["reviews"]; ok {
+			t.Errorf("/api/brief carries reviews, want them left to /api/reviews")
+		}
+		for _, k := range []string{"priorities", "sessions", "handoffs"} {
+			if _, ok := got[k]; !ok {
+				t.Errorf("/api/brief has no %s", k)
+			}
 		}
 	})
 }
@@ -381,13 +401,13 @@ func TestBriefReviewsCache(t *testing.T) {
 		for range 3 {
 			go func() {
 				rec := httptest.NewRecorder()
-				h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/brief", nil))
+				h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/reviews", nil))
 				done <- rec.Code
 			}()
 		}
 		for range 3 {
 			if code := <-done; code != http.StatusOK {
-				t.Errorf("/api/brief = %d", code)
+				t.Errorf("/api/reviews = %d", code)
 			}
 		}
 		if got := f.callCount() - before; got != perFetch {

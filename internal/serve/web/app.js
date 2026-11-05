@@ -805,7 +805,43 @@ function renderOverview(d, el, p) {
     (ssBody || el.lastElementChild.querySelector(".body")).appendChild(foot);
   }
 
-  renderReviews(el, d.reviews);
+  loadReviews(el, d);
+}
+
+// A browser opens about six connections to one server, and this request holds
+// one for as long as GitHub takes. One per draw would use them all after a few
+// refreshes and queue every other request on the page behind them, so draws
+// share the one in flight.
+let reviewsRequest = null;
+function fetchReviews() {
+  reviewsRequest ||= fetchJSON("api/reviews").finally(() => {
+    reviewsRequest = null;
+  });
+  return reviewsRequest;
+}
+
+// loadReviews draws the REVIEWS card once GitHub answers, so the rest of the
+// brief does not wait on it. The answer is kept on d: a redraw from the same
+// response reuses it, and a failure is retried on the next draw.
+function loadReviews(el, d) {
+  if (d.reviews) {
+    renderReviews(el, d.reviews);
+    return;
+  }
+  const body = card(el, "REVIEWS", { caps: true });
+  body.innerHTML = `<p class="loading">Loading…</p>`;
+  const slot = body.parentElement;
+  fetchReviews()
+    .then(
+      (rv) => (d.reviews = rv),
+      (e) => ({ error: e && e.message ? e.message : String(e) })
+    )
+    .then((rv) => {
+      if (!slot.isConnected) return;
+      const frag = document.createDocumentFragment();
+      renderReviews(frag, rv);
+      slot.replaceWith(frag);
+    });
 }
 
 // A PR's URL comes from GitHub; only a web link is made clickable, so a
