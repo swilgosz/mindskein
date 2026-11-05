@@ -61,6 +61,7 @@ type briefReviewsJSON struct {
 	Cached       bool   `json:"cached"`
 	CacheAge     string `json:"cache_age"`
 	RefreshError string `json:"refresh_error"`
+	Stale        bool   `json:"stale"`
 	Counts       []struct {
 		Space  string `json:"space"`
 		Groups []struct {
@@ -412,6 +413,180 @@ func TestBriefReviewsCache(t *testing.T) {
 		}
 		if got := f.callCount() - before; got != perFetch {
 			t.Errorf("three requests called gh %d times, want the %d of one fetch", got, perFetch)
+		}
+	})
+}
+
+func TestDashboardReviewsFromCache(t *testing.T) {
+	cached := func(t *testing.T) briefReviewsJSON {
+		t.Helper()
+		var got briefReviewsJSON
+		apiGet(t, serveHandler(defaultConfig(t)), "/api/reviews?cached=1", &got)
+		return got
+	}
+
+	t.Run("a cache older than cache_age is answered without asking GitHub, with its age, and marked stale", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		ageCache(t, home, 3*time.Hour)
+		before := f.callCount()
+		got := cached(t)
+		if n := f.callCount() - before; n != 0 {
+			t.Errorf("called gh %d times, want none", n)
+		}
+		if !got.Stale || !got.Cached || got.CacheAge != "3h" || len(got.Top) != 3 {
+			t.Errorf("got %+v, want the queue cached 3h ago, marked stale", got)
+		}
+	})
+
+	t.Run("a cache younger than cache_age is not marked stale", func(t *testing.T) {
+		f := morningQueue()
+		useGitHub(t, f)
+		mustRun(t, "prs")
+		before := f.callCount()
+		if got := cached(t); got.Stale || !got.Cached || len(got.Top) != 3 {
+			t.Errorf("got %+v, want the cached queue, not stale", got)
+		}
+		if n := f.callCount() - before; n != 0 {
+			t.Errorf("called gh %d times, want none", n)
+		}
+	})
+
+	t.Run("with cache_age 0 every cache is stale, so the page still asks GitHub", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		reviewsConfig(t, home, "cache_age = \"0\"\n")
+		if got := cached(t); !got.Stale {
+			t.Errorf("got %+v, want it marked stale", got)
+		}
+	})
+
+	t.Run("it does not wait for a fetch in flight", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		ageCache(t, home, 3*time.Hour)
+		h := serveHandler(defaultConfig(t))
+
+		queueMu.Lock()
+		defer queueMu.Unlock()
+		done := make(chan int, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/reviews?cached=1", nil))
+			done <- rec.Code
+		}()
+		select {
+		case code := <-done:
+			if code != http.StatusOK {
+				t.Errorf("/api/reviews?cached=1 = %d", code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("/api/reviews?cached=1 waited for the fetch in flight")
+		}
+	})
+
+	t.Run("it shows the same marks and spaces as a fresh read", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		reviewsConfig(t, home, briefSpaces)
+		mustRun(t, "prs")
+		mustRun(t, "prs", "decline", "acme/api#412")
+		mustRun(t, "prs", "done", "acme/web#88")
+
+		var fresh briefReviewsJSON
+		apiGet(t, serveHandler(defaultConfig(t)), "/api/reviews", &fresh)
+		got := cached(t)
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(fresh)
+		if string(gotJSON) != string(wantJSON) {
+			t.Errorf("/api/reviews?cached=1 =\n%s\nwant\n%s", gotJSON, wantJSON)
+		}
+	})
+
+	t.Run("with no cache it asks GitHub, as /api/reviews does", func(t *testing.T) {
+		f := morningQueue()
+		useGitHub(t, f)
+		got := cached(t)
+		if f.callCount() == 0 {
+			t.Error("called no gh, want one fetch")
+		}
+		if got.Cached || got.Stale || len(got.Top) != 3 {
+			t.Errorf("got %+v, want the fetched queue", got)
+		}
+	})
+
+	t.Run("a cache judged with another agent marker is not shown", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		reviewsConfig(t, home, "agent_marker = \"## Spec\"\n")
+		before := f.callCount()
+		if got := cached(t); got.Cached || got.Stale {
+			t.Errorf("got %+v, want it fetched again", got)
+		}
+		if f.callCount() == before {
+			t.Error("called no gh, want one fetch")
+		}
+	})
+
+	t.Run("a cache from an older version is not shown", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		path := filepath.Join(home, reviews.CacheFile)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		doc["version"] = 1
+		data, _ = json.Marshal(doc)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := f.callCount()
+		if got := cached(t); got.Cached || got.Stale {
+			t.Errorf("got %+v, want it fetched again", got)
+		}
+		if f.callCount() == before {
+			t.Error("called no gh, want one fetch")
+		}
+	})
+
+	t.Run("the /api/reviews the page asks next refreshes it, so the next cached read is no longer stale", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		ageCache(t, home, 3*time.Hour)
+		var fresh briefReviewsJSON
+		apiGet(t, serveHandler(defaultConfig(t)), "/api/reviews", &fresh)
+		if fresh.Cached || fresh.Stale {
+			t.Errorf("/api/reviews = %+v, want it fetched", fresh)
+		}
+		if got := cached(t); got.Stale || !got.Cached {
+			t.Errorf("next cached read = %+v, want it no longer stale", got)
+		}
+	})
+
+	t.Run("a refresh that fails says why, and neither it nor brief --json is marked stale", func(t *testing.T) {
+		f := morningQueue()
+		home := useGitHub(t, f)
+		mustRun(t, "prs")
+		ageCache(t, home, 3*time.Hour)
+		f.fail = unreachable
+		var refreshed briefReviewsJSON
+		apiGet(t, serveHandler(defaultConfig(t)), "/api/reviews", &refreshed)
+		if refreshed.Stale || !refreshed.Cached || refreshed.RefreshError == "" {
+			t.Errorf("/api/reviews = %+v, want the cached queue with why it was not refreshed, not stale", refreshed)
+		}
+		if r := briefReviews(t); r.Stale {
+			t.Errorf("brief --json = %+v, want no stale mark", r)
 		}
 	})
 }

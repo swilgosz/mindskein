@@ -29,6 +29,7 @@ type Summary struct {
 	Cached       bool   `json:"cached"`
 	CacheAge     string `json:"cache_age,omitempty"`
 	RefreshError string `json:"refresh_error,omitempty"`
+	Stale        bool   `json:"stale,omitempty"`
 
 	// Counts has one entry per space holding an open pull request, in the
 	// order spaces are shown; with no spaces configured, one with no name.
@@ -62,7 +63,7 @@ type Pick struct {
 // Summarize condenses an arranged report into the brief's block. It counts
 // the open groups only: Declined and Done this week wait on no one.
 func Summarize(r Report, now time.Time) Summary {
-	s := Summary{Error: r.Error, Cached: r.Cached, CacheAge: r.CacheAge, RefreshError: r.RefreshError,
+	s := Summary{Error: r.Error, Cached: r.Cached, CacheAge: r.CacheAge, RefreshError: r.RefreshError, Stale: r.Stale,
 		Counts: []SpaceCount{}, Top: []Pick{}}
 	if r.Error != "" {
 		return s

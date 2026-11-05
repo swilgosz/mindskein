@@ -144,8 +144,12 @@ func serveHandler(cfg config.Config) http.Handler {
 				all := r.URL.Query().Get("all") == "1"
 				return buildLocalBrief(cfg, all, cfg.Status.HideAfter.Duration(), time.Now().UTC()), nil
 			},
-			"reviews": func(*http.Request) (any, error) {
-				return buildReviews(cfg, time.Now().UTC(), os.Stderr), nil
+			"reviews": func(r *http.Request) (any, error) {
+				now := time.Now().UTC()
+				if r.URL.Query().Get("cached") == "1" {
+					return buildCachedReviews(cfg, now, os.Stderr), nil
+				}
+				return buildReviews(cfg, now, os.Stderr), nil
 			},
 			"setup": func(*http.Request) (any, error) {
 				return buildSetup()

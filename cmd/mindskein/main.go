@@ -254,10 +254,20 @@ func buildBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.T
 	return b
 }
 
-// buildReviews is the REVIEWS block. It may wait on GitHub for as long as the
-// gh timeout allows.
+// buildReviews is the REVIEWS block, as fresh as cache_age asks. It may wait on
+// GitHub, each gh call bounded by the gh timeout.
 func buildReviews(cfg config.Config, now time.Time, warn io.Writer) *reviewsBlock {
-	return &reviewsBlock{Heading: reviews.BriefHeading, Summary: reviews.Summarize(readQueue(cfg, now, warn), now)}
+	return newReviewsBlock(readQueue(cfg, now, warn), now)
+}
+
+// buildCachedReviews is the REVIEWS block from the cache whatever its age; it
+// waits on GitHub only when there is no cache to show.
+func buildCachedReviews(cfg config.Config, now time.Time, warn io.Writer) *reviewsBlock {
+	return newReviewsBlock(readCachedQueue(cfg, now, warn), now)
+}
+
+func newReviewsBlock(r reviews.Report, now time.Time) *reviewsBlock {
+	return &reviewsBlock{Heading: reviews.BriefHeading, Summary: reviews.Summarize(r, now)}
 }
 
 // buildLocalBrief is every block read from this machine alone, so it never

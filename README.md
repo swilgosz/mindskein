@@ -378,7 +378,8 @@ unless_review_requested = true   # keep it when your review is asked of you by n
 `http://127.0.0.1:8787`: usage, the brief, setup (are the hooks registered,
 what failed) and the health of each Claude config. The Brief tab's Reviews
 card shows the same counts and top 3 as the brief, each PR linked to GitHub. It
-fills in once GitHub answers; the rest of the page does not wait for it.
+shows the last result at once, with its age, and updates when GitHub answers;
+the rest of the page does not wait for it.
 It listens on the loopback interface only, and the page loads nothing from
 the internet.
 It only reads: recommendations show each finding's id and how many are

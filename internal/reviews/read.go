@@ -38,6 +38,9 @@ type Report struct {
 	// RefreshError says why a cached queue is shown in place of a fresh one.
 	RefreshError string `json:"refresh_error,omitempty"`
 
+	// Stale says a cached queue is one Read would refresh.
+	Stale bool `json:"stale,omitempty"`
+
 	Queue
 }
 
@@ -60,10 +63,8 @@ type cacheDoc struct {
 // written; the report is usable either way.
 func Read(ctx context.Context, opts Options) (Report, error) {
 	cached, haveCache := loadCache(opts.CachePath)
-	if haveCache && cached.Marker == opts.Marker && cached.Version == cacheVersion {
-		if age := opts.Now.Sub(cached.Queue.FetchedAt); age >= 0 && age < opts.CacheAge {
-			return fromCache(cached.Queue, opts.Now, ""), nil
-		}
+	if haveCache && cached.reusable(opts) && cached.fresh(opts) {
+		return fromCache(cached.Queue, opts.Now, ""), nil
 	}
 
 	q, err := Fetch(ctx, opts.Run, opts.Timeout, opts.Marker, opts.Now)
@@ -74,6 +75,28 @@ func Read(ctx context.Context, opts Options) (Report, error) {
 		return Report{Error: Explain(err)}, nil
 	}
 	return Report{Queue: q}, saveCache(opts.CachePath, cacheDoc{Version: cacheVersion, Marker: opts.Marker, Queue: q})
+}
+
+// ReadCached returns the cached queue whatever its age, marked Stale when Read
+// would refresh it. It never asks GitHub, and a cache is replaced atomically,
+// so it can run during a fetch. False means no cache that Read would reuse.
+func ReadCached(opts Options) (Report, bool) {
+	cached, ok := loadCache(opts.CachePath)
+	if !ok || !cached.reusable(opts) {
+		return Report{}, false
+	}
+	r := fromCache(cached.Queue, opts.Now, "")
+	r.Stale = !cached.fresh(opts)
+	return r, true
+}
+
+func (d cacheDoc) reusable(opts Options) bool {
+	return d.Marker == opts.Marker && d.Version == cacheVersion
+}
+
+func (d cacheDoc) fresh(opts Options) bool {
+	age := opts.Now.Sub(d.Queue.FetchedAt)
+	return age >= 0 && age < opts.CacheAge
 }
 
 func fromCache(q Queue, now time.Time, refreshErr string) Report {
