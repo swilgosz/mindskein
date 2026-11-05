@@ -142,7 +142,10 @@ func serveHandler(cfg config.Config) http.Handler {
 			},
 			"brief": func(r *http.Request) (any, error) {
 				all := r.URL.Query().Get("all") == "1"
-				return buildBrief(cfg, all, cfg.Status.HideAfter.Duration(), time.Now().UTC(), os.Stderr), nil
+				return buildLocalBrief(cfg, all, cfg.Status.HideAfter.Duration(), time.Now().UTC()), nil
+			},
+			"reviews": func(*http.Request) (any, error) {
+				return buildReviews(cfg, time.Now().UTC(), os.Stderr), nil
 			},
 			"setup": func(*http.Request) (any, error) {
 				return buildSetup()

@@ -220,7 +220,7 @@ type briefReport struct {
 	Priorities  prioritiesBlock `json:"priorities"`
 	Sessions    sessionsBlock   `json:"sessions"`
 	Handoffs    handoffsBlock   `json:"handoffs"`
-	Reviews     reviewsBlock    `json:"reviews"`
+	Reviews     *reviewsBlock   `json:"reviews,omitempty"`
 }
 
 type reviewsBlock struct {
@@ -249,14 +249,26 @@ type handoffsBlock struct {
 // buildBrief decides every block. Warnings that cost no block, such as a PR
 // cache that could not be saved, go to warn.
 func buildBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.Time, warn io.Writer) briefReport {
+	b := buildLocalBrief(cfg, all, hideAfter, now)
+	b.Reviews = buildReviews(cfg, now, warn)
+	return b
+}
+
+// buildReviews is the REVIEWS block. It may wait on GitHub for as long as the
+// gh timeout allows.
+func buildReviews(cfg config.Config, now time.Time, warn io.Writer) *reviewsBlock {
+	return &reviewsBlock{Heading: reviews.BriefHeading, Summary: reviews.Summarize(readQueue(cfg, now, warn), now)}
+}
+
+// buildLocalBrief is every block read from this machine alone, so it never
+// waits on the network. REVIEWS is left out.
+func buildLocalBrief(cfg config.Config, all bool, hideAfter time.Duration, now time.Time) briefReport {
 	b := briefReport{
 		GeneratedAt: now,
 		Priorities:  prioritiesBlock{Heading: priorities.Heading},
 		Sessions:    sessionsBlock{Heading: session.Heading},
 		Handoffs:    handoffsBlock{Heading: handoff.Heading},
-		Reviews:     reviewsBlock{Heading: reviews.BriefHeading},
 	}
-	b.Reviews.Summary = reviews.Summarize(readQueue(cfg, now, warn), now)
 	if v, err := priorityView(cfg, all); err != nil {
 		b.Priorities.Error = err.Error()
 	} else {
