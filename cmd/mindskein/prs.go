@@ -89,7 +89,10 @@ var queueMu sync.Mutex
 // being out of reach is the report's one line.
 func readQueue(cfg config.Config, now time.Time, warn io.Writer) reviews.Report {
 	queueMu.Lock()
-	report, err := reviews.Read(context.Background(), readOptions(cfg, now))
+	// Freshness is judged on a clock read under the lock: now may predate the
+	// fetch this request waited on, and a cache stamped after its reader's clock
+	// is not fresh, so the wait would end in a second fetch.
+	report, err := reviews.Read(context.Background(), readOptions(cfg, time.Now().UTC()))
 	queueMu.Unlock()
 	if err != nil {
 		fmt.Fprintf(warn, "mindskein: saving the PR cache: %v\n", err)
