@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -413,6 +414,24 @@ func TestBriefReviewsCache(t *testing.T) {
 		}
 		if got := f.callCount() - before; got != perFetch {
 			t.Errorf("three requests called gh %d times, want the %d of one fetch", got, perFetch)
+		}
+	})
+
+	t.Run("a request that read the clock before a fetch began still takes the cache that fetch wrote", func(t *testing.T) {
+		f := morningQueue()
+		useGitHub(t, f)
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		clockReadFirst := time.Now().UTC().Add(-time.Microsecond)
+		readQueue(cfg, time.Now().UTC(), io.Discard)
+		before := f.callCount()
+		if r := readQueue(cfg, clockReadFirst, io.Discard); !r.Cached {
+			t.Error("want the queue from the cache")
+		}
+		if got := f.callCount() - before; got != 0 {
+			t.Errorf("called gh %d more times, want none", got)
 		}
 	})
 }
