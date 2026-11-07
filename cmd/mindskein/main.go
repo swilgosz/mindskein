@@ -276,7 +276,7 @@ func buildLocalBrief(cfg config.Config, all bool, hideAfter time.Duration, now t
 	b := briefReport{
 		GeneratedAt: now,
 		Priorities:  prioritiesBlock{Heading: priorities.Heading},
-		Sessions:    sessionsBlock{Heading: session.Heading},
+		Sessions:    sessionsBlock{Heading: session.Heading, View: session.View{Rows: []session.Row{}}},
 		Handoffs:    handoffsBlock{Heading: handoff.Heading},
 	}
 	if v, err := priorityView(cfg, all); err != nil {
@@ -370,6 +370,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	all := fs.Bool("all", false, "include sessions that have ended or aged out")
+	asJSON := fs.Bool("json", false, "print the sessions as JSON")
 	fs.Var(&hideAfter, "hide-after", "hide sessions quiet for longer than this (0 keeps every one)")
 	if err := fs.Parse(args); err != nil {
 		// -h is a request, not a failure: flag has already printed the usage.
@@ -385,16 +386,17 @@ func cmdStatus(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "mindskein: %v — using defaults\n", cfgErr)
 	}
 
-	return renderSessions(stdout, sessionLabels(), *all, hideAfter.Duration())
-}
-
-// renderSessions is the LIVE SESSIONS block printed alone.
-func renderSessions(w io.Writer, labels map[string]string, all bool, hideAfter time.Duration) error {
-	v, err := sessionView(labels, all, hideAfter, time.Now().UTC())
+	v, err := sessionView(sessionLabels(), *all, hideAfter.Duration(), time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	return session.Print(w, v)
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.SetEscapeHTML(false)
+		return enc.Encode(v)
+	}
+	return session.Print(stdout, v)
 }
 
 // sessionView is the LIVE SESSIONS block decided, shared by the brief and by

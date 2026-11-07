@@ -66,6 +66,7 @@ type Row struct {
 	ShortID     string    `json:"short_id"`
 	Label       string    `json:"label"`
 	Project     string    `json:"project,omitempty"`
+	ProjectPath string    `json:"project_path"`
 	State       State     `json:"state"`
 	Status      string    `json:"status"`
 	LastEventAt time.Time `json:"last_event_at"`
@@ -91,10 +92,10 @@ type View struct {
 // BuildView decides which sessions show and how each one reads.
 func BuildView(sessions []*Session, now time.Time, opts RenderOptions) View {
 	if len(sessions) == 0 {
-		return View{Hint: "none recorded yet — the hooks write here as sessions run"}
+		return View{Rows: []Row{}, Hint: "none recorded yet — the hooks write here as sessions run"}
 	}
 
-	var v View
+	v := View{Rows: []Row{}}
 	ended, old := 0, 0
 	for _, s := range sessions {
 		// A session past the horizon that also ended counts as ended: that is
@@ -141,6 +142,7 @@ func BuildView(sessions []*Session, now time.Time, opts RenderOptions) View {
 			ShortID:     s.ShortID(),
 			Label:       label,
 			Project:     project,
+			ProjectPath: s.ProjectPath,
 			State:       state,
 			Status:      status,
 			LastEventAt: s.LastEventAt,
