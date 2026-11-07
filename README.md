@@ -152,7 +152,7 @@ which is far longer than anything this should ever need.
 
 ```sh
 mindskein brief         # all four sections — the morning read
-mindskein status        # live sessions only — the mid-day check
+mindskein status        # live sessions only — the mid-day check; --json for agents
 mindskein priorities    # the priorities file only
 mindskein prs           # pull requests waiting on you, from every org
 mindskein prs decline   # hide a PR for 7 days; prs done hides it until it changes
@@ -167,6 +167,11 @@ mindskein upgrade       # build the newest version with Go and swap it in
 `--all` widens every section: the `!3` backlog, sessions that have ended or
 aged out, and every workstream rather than the newest few. `--json` prints
 the brief for agents, REVIEWS included as `reviews`.
+
+`status --json` prints the same sessions as `status`, with `--all` and
+`--hide-after` applied the same way, without the columns' cut-offs. Each row
+has the full `label` and the session's folder as `project_path`; `rows` is `[]`
+when there are none.
 
 Set `MINDSKEIN_PROJECT` before launching Claude to name a workstream that spans
 several folders and sessions. It is the only grouping key that does, and
